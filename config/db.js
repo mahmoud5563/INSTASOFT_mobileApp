@@ -1,12 +1,13 @@
+require("dotenv").config();
 const sql = require("mssql");
 
 const dbConfig = {
-  user: "db_abb69d_instasoftmobile_admin",  // اليوزر نيم اللي في الكونكشن
-  password: "instasoft_mobile20",           // الباسورد
-  server: "SQL1001.site4now.net",           // السيرفر
-  database: "db_abb69d_instasoftmobile",    // اسم الداتابيز
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  server: process.env.DB_SERVER,
+  database: process.env.DB_DATABASE,
   options: {
-    encrypt: true,        // مهم عشان السيرفر أونلاين
+    encrypt: true,
     trustServerCertificate: false
   }
 };
