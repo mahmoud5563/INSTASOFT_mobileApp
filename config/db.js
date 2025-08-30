@@ -1,11 +1,13 @@
-const sql = require("mssql/msnodesqlv8");
+const sql = require("mssql");
 
 const dbConfig = {
-  server: "WARD\\SPAXET",  // أو غيرها لو عايز IP
-  database: "InstaData",
+  user: "db_abb69d_instasoftmobile_admin",  // اليوزر نيم اللي في الكونكشن
+  password: "instasoft_mobile20",           // الباسورد
+  server: "SQL1001.site4now.net",           // السيرفر
+  database: "db_abb69d_instasoftmobile",    // اسم الداتابيز
   options: {
-    trustedConnection: true,
-    encrypt: false
+    encrypt: true,        // مهم عشان السيرفر أونلاين
+    trustServerCertificate: false
   }
 };
 
