@@ -4,13 +4,45 @@ const { pool, sql } = require("../config/db");
 
 // ✅ GET كل الحسابات (عملاء + موردين)
 router.get("/", async (req, res) => {
-  try {
-    const result = await pool.request().query("SELECT * FROM account_add");
-    res.json(result.recordset);
-  } catch (err) {
-    console.error("❌ Error fetching accounts:", err);
-    res.status(500).json({ error: "Database fetch failed" });
-  }
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 5;
+    const offset = (page - 1) * limit;
+
+    try {
+        // استعلام للحصول على البيانات مع الباجينيشن
+        const paginatedQuery = `
+            SELECT * FROM account_add
+            ORDER BY code ASC 
+            OFFSET ${offset} ROWS 
+            FETCH NEXT ${limit} ROWS ONLY;
+        `;
+        const result = await pool.request().query(paginatedQuery);
+
+        // استعلام للحصول على العدد الإجمالي للصفوف
+        const countQuery = `
+            SELECT COUNT(*) AS total FROM account_add;
+        `;
+        const totalResult = await pool.request().query(countQuery);
+        const totalAccounts = totalResult.recordset[0].total;
+        
+        // حساب إجمالي عدد الصفحات
+        const totalPages = Math.ceil(totalAccounts / limit);
+
+        // إرسال البيانات ومعلومات الباجينيشن إلى العميل
+        res.json({
+            accounts: result.recordset,
+            pagination: {
+                totalAccounts: totalAccounts,
+                totalPages: totalPages,
+                currentPage: page,
+                itemsPerPage: limit
+            }
+        });
+
+    } catch (err) {
+        console.error("❌ Error fetching accounts:", err);
+        res.status(500).json({ error: "Database fetch failed" });
+    }
 });
 
 // ✅ GET كل العملاء
