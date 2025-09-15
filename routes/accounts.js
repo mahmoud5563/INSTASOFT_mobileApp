@@ -47,26 +47,89 @@ router.get("/", async (req, res) => {
 
 // ✅ GET كل العملاء
 router.get("/customers", async (req, res) => {
-  try {
-    const result = await pool.request()
-      .query("SELECT * FROM account_show WHERE acc_kind = 0"); // 0 = عميل
-    res.json(result.recordset);
-  } catch (err) {
-    console.error("❌ Error fetching customers:", err);
-    res.status(500).json({ error: "Database fetch failed" });
-  }
+    try {
+        
+        const page = parseInt(req.query.page) || 1; 
+        const limit = parseInt(req.query.limit) || 5; 
+        const offset = (page - 1) * limit; 
+
+        // استعلام للحصول على إجمالي عدد العملاء
+        const countQuery = `
+            SELECT COUNT(*) AS total FROM account_show WHERE acc_kind = 0;
+        `;
+        const totalResult = await pool.request().query(countQuery);
+        const totalCustomers = totalResult.recordset[0].total;
+
+        // حساب إجمالي عدد الصفحات
+        const totalPages = Math.ceil(totalCustomers / limit);
+
+        // استعلام لجلب بيانات العملاء للصفحة المطلوبة
+        const paginatedQuery = `
+            SELECT * FROM account_show 
+            WHERE acc_kind = 0
+            ORDER BY code ASC 
+            OFFSET ${offset} ROWS 
+            FETCH NEXT ${limit} ROWS ONLY;
+        `;
+        const result = await pool.request().query(paginatedQuery);
+
+        // إرسال البيانات ومعلومات الـ pagination في الـ response
+        res.json({
+            customers: result.recordset,
+            pagination: {
+                totalCustomers: totalCustomers,
+                totalPages: totalPages,
+                currentPage: page,
+                itemsPerPage: limit
+            }
+        });
+    } catch (err) {
+        console.error("❌ Error fetching customers:", err);
+        res.status(500).json({ error: "Database fetch failed" });
+    }
 });
 
 // ✅ GET كل الموردين
 router.get("/suppliers", async (req, res) => {
-  try {
-    const result = await pool.request()
-      .query("SELECT * FROM account_add WHERE acc_kind = 1"); // 1 = مورد
-    res.json(result.recordset);
-  } catch (err) {
-    console.error("❌ Error fetching suppliers:", err);
-    res.status(500).json({ error: "Database fetch failed" });
-  }
+    try {
+        const page = parseInt(req.query.page) || 1; 
+        const limit = parseInt(req.query.limit) || 6; 
+        const offset = (page - 1) * limit; 
+
+        // استعلام للحصول على إجمالي عدد الموردين
+        const countQuery = `
+            SELECT COUNT(*) AS total FROM account_add WHERE acc_kind = 1;
+        `;
+        const totalResult = await pool.request().query(countQuery);
+        const totalSuppliers = totalResult.recordset[0].total;
+
+        // حساب إجمالي عدد الصفحات
+        const totalPages = Math.ceil(totalSuppliers / limit);
+
+        // استعلام لجلب بيانات الموردين للصفحة المطلوبة
+        const paginatedQuery = `
+            SELECT * FROM account_add 
+            WHERE acc_kind = 1
+            ORDER BY code ASC 
+            OFFSET ${offset} ROWS 
+            FETCH NEXT ${limit} ROWS ONLY;
+        `;
+        const result = await pool.request().query(paginatedQuery);
+
+        // إرسال البيانات ومعلومات الـ pagination في الـ response
+        res.json({
+            suppliers: result.recordset,
+            pagination: {
+                totalSuppliers: totalSuppliers,
+                totalPages: totalPages,
+                currentPage: page,
+                itemsPerPage: limit
+            }
+        });
+    } catch (err) {
+        console.error("❌ Error fetching suppliers:", err);
+        res.status(500).json({ error: "Database fetch failed" });
+    }
 });
 
 // (ملف عميل ) ✅ GET حركة حساب برقم الكود
@@ -117,99 +180,242 @@ router.get("/balances/all", async (req, res) => {
 
 // ✅ GET تقرير أرصدة العملاء فقط
 router.get("/balances/customers", async (req, res) => {
-  try {
-    const result = await pool.request().query(`
-      SELECT 
-        a.code,
-        a.acc_name,
-        a.acc_Balance_open,
-        ISNULL(SUM(t.trans_debit), 0) AS total_debit,
-        ISNULL(SUM(t.trans_credit), 0) AS total_credit,
-        a.acc_Balance_open + ISNULL(SUM(t.trans_debit), 0) - ISNULL(SUM(t.trans_credit), 0) AS balance
-      FROM account_add a
-      LEFT JOIN account_trans t ON a.code = t.code
-      WHERE a.acc_kind = 0
-      GROUP BY a.code, a.acc_name, a.acc_Balance_open
-    `);
+    try {
+        // تحديد متغيرات الـ pagination
+        const page = parseInt(req.query.page) || 1; 
+        const limit = parseInt(req.query.limit) || 5;
+        const offset = (page - 1) * limit;
 
-    res.json(result.recordset);
-  } catch (err) {
-    console.error("❌ Error fetching customers balances:", err);
-    res.status(500).json({ error: "Database fetch failed" });
-  }
+        // استعلام للحصول على العدد الإجمالي للعملاء
+        const countQuery = `
+            SELECT COUNT(*) AS total
+            FROM (
+                SELECT a.code
+                FROM account_add a
+                WHERE a.acc_kind = 0
+                GROUP BY a.code
+            ) AS CustomerCount;
+        `;
+        const totalResult = await pool.request().query(countQuery);
+        const totalCustomers = totalResult.recordset[0].total;
+        
+        // حساب إجمالي عدد الصفحات
+        const totalPages = Math.ceil(totalCustomers / limit);
+
+        // استعلام لجلب أرصدة العملاء للصفحة المطلوبة
+        const paginatedQuery = `
+            SELECT 
+                a.code,
+                a.acc_name,
+                a.acc_Balance_open,
+                ISNULL(SUM(t.trans_debit), 0) AS total_debit,
+                ISNULL(SUM(t.trans_credit), 0) AS total_credit,
+                a.acc_Balance_open + ISNULL(SUM(t.trans_debit), 0) - ISNULL(SUM(t.trans_credit), 0) AS balance
+            FROM account_add a
+            LEFT JOIN account_trans t ON a.code = t.code
+            WHERE a.acc_kind = 0
+            GROUP BY a.code, a.acc_name, a.acc_Balance_open
+            ORDER BY a.code ASC
+            OFFSET ${offset} ROWS
+            FETCH NEXT ${limit} ROWS ONLY;
+        `;
+
+        const result = await pool.request().query(paginatedQuery);
+
+        res.json({
+            balances: result.recordset,
+            pagination: {
+                totalCustomers: totalCustomers,
+                totalPages: totalPages,
+                currentPage: page,
+                itemsPerPage: limit
+            }
+        });
+    } catch (err) {
+        console.error("❌ Error fetching customers balances:", err);
+        res.status(500).json({ error: "Database fetch failed" });
+    }
 });
 
 // ✅ GET تقرير أرصدة الموردين فقط
 router.get("/balances/suppliers", async (req, res) => {
-  try {
-    const result = await pool.request().query(`
-      SELECT 
-        a.code,
-        a.acc_name,
-        a.acc_Balance_open,
-        ISNULL(SUM(t.trans_debit), 0) AS total_debit,
-        ISNULL(SUM(t.trans_credit), 0) AS total_credit,
-        a.acc_Balance_open + ISNULL(SUM(t.trans_debit), 0) - ISNULL(SUM(t.trans_credit), 0) AS balance
-      FROM account_add a
-      LEFT JOIN account_trans t ON a.code = t.code
-      WHERE a.acc_kind = 1
-      GROUP BY a.code, a.acc_name, a.acc_Balance_open
-    `);
+    try {
+        // تحديد متغيرات الـ pagination
+        const page = parseInt(req.query.page) || 1; 
+        const limit = parseInt(req.query.limit) || 5;
+        const offset = (page - 1) * limit;
 
-    res.json(result.recordset);
-  } catch (err) {
-    console.error("❌ Error fetching suppliers balances:", err);
-    res.status(500).json({ error: "Database fetch failed" });
-  }
+        // استعلام للحصول على العدد الإجمالي للموردين
+        const countQuery = `
+            SELECT COUNT(*) AS total
+            FROM (
+                SELECT a.code
+                FROM account_add a
+                WHERE a.acc_kind = 1
+                GROUP BY a.code
+            ) AS SupplierCount;
+        `;
+        const totalResult = await pool.request().query(countQuery);
+        const totalSuppliers = totalResult.recordset[0].total;
+        
+        // حساب إجمالي عدد الصفحات
+        const totalPages = Math.ceil(totalSuppliers / limit);
+
+        // استعلام لجلب أرصدة الموردين للصفحة المطلوبة
+        const paginatedQuery = `
+            SELECT 
+                a.code,
+                a.acc_name,
+                a.acc_Balance_open,
+                ISNULL(SUM(t.trans_debit), 0) AS total_debit,
+                ISNULL(SUM(t.trans_credit), 0) AS total_credit,
+                a.acc_Balance_open + ISNULL(SUM(t.trans_debit), 0) - ISNULL(SUM(t.trans_credit), 0) AS balance
+            FROM account_add a
+            LEFT JOIN account_trans t ON a.code = t.code
+            WHERE a.acc_kind = 1
+            GROUP BY a.code, a.acc_name, a.acc_Balance_open
+            ORDER BY a.code ASC
+            OFFSET ${offset} ROWS
+            FETCH NEXT ${limit} ROWS ONLY;
+        `;
+
+        const result = await pool.request().query(paginatedQuery);
+
+        res.json({
+            balances: result.recordset,
+            pagination: {
+                totalSuppliers: totalSuppliers,
+                totalPages: totalPages,
+                currentPage: page,
+                itemsPerPage: limit
+            }
+        });
+    } catch (err) {
+        console.error("❌ Error fetching suppliers balances:", err);
+        res.status(500).json({ error: "Database fetch failed" });
+    }
 });
 
 // GET ارصده تعدت حد الاتمان
 router.get("/over-credit", async (req, res) => {
-  try {
-    const result = await pool.request().query(`SELECT 
-  a.code,
-  a.acc_name,
-  a.acc_Balance_open,
-  ISNULL(SUM(t.trans_debit), 0) AS total_debit,
-  ISNULL(SUM(t.trans_credit), 0) AS total_credit,
-  a.acc_Balance_open + ISNULL(SUM(t.trans_debit), 0) - ISNULL(SUM(t.trans_credit), 0) AS balance,
-  a.acc_Credit
-FROM account_add a
-LEFT JOIN account_trans t ON a.code = t.code
-GROUP BY a.code, a.acc_name, a.acc_Balance_open, a.acc_Credit
-HAVING 
-  a.acc_Credit > 0  -- يستبعد اللي رصيده صفر
-  AND (a.acc_Balance_open + ISNULL(SUM(t.trans_debit), 0) - ISNULL(SUM(t.trans_credit), 0)) > a.acc_Credit;
-`);
+    try {
+        // تحديد متغيرات الـ pagination
+        const page = parseInt(req.query.page) || 1; 
+        const limit = parseInt(req.query.limit) || 5;
+        const offset = (page - 1) * limit;
 
-    res.json(result.recordset);
-  } catch (err) {
-    console.error("❌ Error fetching accounts over credit:", err);
-    res.status(500).json({ error: "Database fetch failed" });
-  }
+        // استعلام للحصول على العدد الإجمالي للحسابات التي تجاوزت الحد الائتماني
+        const countQuery = `
+            SELECT COUNT(*) AS total
+            FROM (
+                SELECT a.code
+                FROM account_add a
+                LEFT JOIN account_trans t ON a.code = t.code
+                GROUP BY a.code, a.acc_name, a.acc_Balance_open, a.acc_Credit
+                HAVING 
+                    a.acc_Credit > 0
+                    AND (a.acc_Balance_open + ISNULL(SUM(t.trans_debit), 0) - ISNULL(SUM(t.trans_credit), 0)) > a.acc_Credit
+            ) AS OverCreditCount;
+        `;
+        const totalResult = await pool.request().query(countQuery);
+        const totalOverCredit = totalResult.recordset[0].total;
+        
+        // حساب إجمالي عدد الصفحات
+        const totalPages = Math.ceil(totalOverCredit / limit);
+
+        // استعلام لجلب بيانات الحسابات التي تجاوزت الحد الائتماني للصفحة المطلوبة
+        const paginatedQuery = `
+            SELECT 
+                a.code,
+                a.acc_name,
+                a.acc_Balance_open,
+                ISNULL(SUM(t.trans_debit), 0) AS total_debit,
+                ISNULL(SUM(t.trans_credit), 0) AS total_credit,
+                a.acc_Balance_open + ISNULL(SUM(t.trans_debit), 0) - ISNULL(SUM(t.trans_credit), 0) AS balance,
+                a.acc_Credit
+            FROM account_add a
+            LEFT JOIN account_trans t ON a.code = t.code
+            GROUP BY a.code, a.acc_name, a.acc_Balance_open, a.acc_Credit
+            HAVING 
+                a.acc_Credit > 0
+                AND (a.acc_Balance_open + ISNULL(SUM(t.trans_debit), 0) - ISNULL(SUM(t.trans_credit), 0)) > a.acc_Credit
+            ORDER BY a.code ASC
+            OFFSET ${offset} ROWS
+            FETCH NEXT ${limit} ROWS ONLY;
+        `;
+
+        const result = await pool.request().query(paginatedQuery);
+
+        res.json({
+            accounts: result.recordset,
+            pagination: {
+                totalAccounts: totalOverCredit,
+                totalPages: totalPages,
+                currentPage: page,
+                itemsPerPage: limit
+            }
+        });
+    } catch (err) {
+        console.error("❌ Error fetching accounts over credit:", err);
+        res.status(500).json({ error: "Database fetch failed" });
+    }
 });
 
 
 
 // ارباح العملاء
 router.get("/profits", async (req, res) => {
-  try {
-    const result = await pool.request().query(`
-      SELECT 
-        il.Accounts_code,
-        il.Accounts_name,
-        SUM((il.item_earn - ia.buy) * il.item_count) AS total_profit
-      FROM invoice_list il
-      INNER JOIN item_add ia ON il.code = ia.code
-      GROUP BY il.Accounts_code, il.Accounts_name
-      ORDER BY total_profit DESC
-    `);
+    try {
+        // تحديد متغيرات الـ pagination
+        const page = parseInt(req.query.page) || 1; 
+        const limit = parseInt(req.query.limit) || 5;
+        const offset = (page - 1) * limit;
 
-    res.json(result.recordset);
-  } catch (err) {
-    console.error("Error fetching customer profits:", err);
-    res.status(500).send("Server Error");
-  }
+        // استعلام للحصول على العدد الإجمالي للحسابات التي حققت أرباح
+        const countQuery = `
+            SELECT COUNT(*) AS total
+            FROM (
+                SELECT il.Accounts_code
+                FROM invoice_list il
+                INNER JOIN item_add ia ON il.code = ia.code
+                GROUP BY il.Accounts_code, il.Accounts_name
+            ) AS ProfitCount;
+        `;
+        const totalResult = await pool.request().query(countQuery);
+        const totalProfits = totalResult.recordset[0].total;
+        
+        // حساب إجمالي عدد الصفحات
+        const totalPages = Math.ceil(totalProfits / limit);
+
+        // استعلام لجلب الأرباح للصفحة المطلوبة
+        const paginatedQuery = `
+            SELECT 
+                il.Accounts_code,
+                il.Accounts_name,
+                SUM((il.item_earn - ia.buy) * il.item_count) AS total_profit
+            FROM invoice_list il
+            INNER JOIN item_add ia ON il.code = ia.code
+            GROUP BY il.Accounts_code, il.Accounts_name
+            ORDER BY total_profit DESC
+            OFFSET ${offset} ROWS
+            FETCH NEXT ${limit} ROWS ONLY;
+        `;
+
+        const result = await pool.request().query(paginatedQuery);
+
+        res.json({
+            profits: result.recordset,
+            pagination: {
+                totalAccounts: totalProfits,
+                totalPages: totalPages,
+                currentPage: page,
+                itemsPerPage: limit
+            }
+        });
+    } catch (err) {
+        console.error("❌ Error fetching customer profits:", err);
+        res.status(500).json({ error: "Server Error" });
+    }
 });
 
 // ارباح عميل معين
@@ -243,13 +449,45 @@ router.get("/profits/:code", async (req, res) => {
 
 // ✅ GET كل المدينين (حسابات برصيد موجب)
 router.get("/debtors", async (req, res) => {
-  try {
-    const result = await pool.request().query("SELECT * FROM account_show WHERE balance > 0");
-    res.json(result.recordset);
-  } catch (err) {
-    console.error("❌ Error fetching debtors:", err);
-    res.status(500).json({ error: "Database fetch failed" });
-  }
+    try {
+        // تحديد متغيرات الـ pagination
+        const page = parseInt(req.query.page) || 1; 
+        const limit = parseInt(req.query.limit) || 5;
+        const offset = (page - 1) * limit;
+
+        // استعلام للحصول على إجمالي عدد المدينين
+        const countQuery = `
+            SELECT COUNT(*) AS total FROM account_show WHERE balance > 0;
+        `;
+        const totalResult = await pool.request().query(countQuery);
+        const totalDebtors = totalResult.recordset[0].total;
+        
+        // حساب إجمالي عدد الصفحات
+        const totalPages = Math.ceil(totalDebtors / limit);
+
+        // استعلام لجلب بيانات المدينين للصفحة المطلوبة
+        const paginatedQuery = `
+            SELECT * FROM account_show 
+            WHERE balance > 0
+            ORDER BY code ASC 
+            OFFSET ${offset} ROWS 
+            FETCH NEXT ${limit} ROWS ONLY;
+        `;
+        const result = await pool.request().query(paginatedQuery);
+
+        res.json({
+            debtors: result.recordset,
+            pagination: {
+                totalDebtors: totalDebtors,
+                totalPages: totalPages,
+                currentPage: page,
+                itemsPerPage: limit
+            }
+        });
+    } catch (err) {
+        console.error("❌ Error fetching debtors:", err);
+        res.status(500).json({ error: "Database fetch failed" });
+    }
 });
 
 // // ✅ GET مدين معين بالكود (حساب برصيد موجب)
@@ -444,13 +682,6 @@ router.get("/:acc_code/item/:item_code/movement", async (req, res) => {
     res.status(500).json({ error: "Database fetch failed" });
   }
 });
-
-
-
-
-
-
-
 
 
 
