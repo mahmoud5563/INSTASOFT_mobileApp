@@ -1,3 +1,4 @@
+// routes/settings.js
 const express = require("express");
 const router = express.Router();
 const { pool, sql } = require("../config/db");
@@ -5,7 +6,7 @@ const { pool, sql } = require("../config/db");
 // ✅ GET all settings
 router.get("/", async (req, res) => {
   try {
-    const result = await pool.request().query("SELECT * FROM setting");
+    const result = await pool.request().query("SELECT * FROM settings");
     res.json(result.recordset);
   } catch (err) {
     console.error("❌ Error fetching settings:", err);
@@ -24,7 +25,7 @@ router.post("/", async (req, res) => {
       .input("start_activation", sql.DateTime, start_activation)
       .input("end_activation", sql.DateTime, end_activation)
       .query(`
-        INSERT INTO setting (is_activated, last_update, start_activation, end_activation)
+        INSERT INTO settings (is_activated, last_update, start_activation, end_activation)
         VALUES (@is_activated, @last_update, @start_activation, @end_activation)
       `);
 
@@ -41,7 +42,7 @@ router.put("/:id", async (req, res) => {
     const { id } = req.params;
     const { is_activated, last_update, start_activation, end_activation } = req.body;
 
-    await pool.request()
+    const result = await pool.request()
       .input("id", sql.Int, id)
       .input("is_activated", sql.Bit, is_activated)
       .input("last_update", sql.DateTime, last_update)
@@ -55,6 +56,10 @@ router.put("/:id", async (req, res) => {
             end_activation = @end_activation
         WHERE id = @id
       `);
+
+    if (result.rowsAffected[0] === 0) {
+      return res.status(404).json({ error: "❌ Setting not found" });
+    }
 
     res.json({ message: "✅ Setting updated successfully" });
   } catch (err) {
