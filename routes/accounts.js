@@ -102,30 +102,36 @@ router.get("/", async (req, res) => {
 // ✅ GET كل العملاء
 router.get("/customers", async (req, res) => {
     try {
-        const page = parseInt(req.query.page) || 1; 
-        const limit = Math.min(parseInt(req.query.limit) || 5, 100);
-        
-        const baseQuery = `
-            SELECT * FROM account_show 
-            WHERE acc_kind = 0
-            ORDER BY code ASC 
-            OFFSET @offset ROWS 
-            FETCH NEXT @limit ROWS ONLY;
+        const limit = Math.min(parseInt(req.query.limit) || 10, 100); 
+        const lastCode = req.query.lastCode || 0; // رقم آخر كود جالك في الصفحة اللي فاتت
+
+        // ✅ اختار الأعمدة المهمة بس، ومتجيبش *
+        const query = `
+            SELECT TOP (@limit) code, acc_name, acc_phone1, acc_address, balance, credit, debit
+            FROM account_show
+            WHERE acc_kind = 0 AND code > @lastCode
+            ORDER BY code ASC;
         `;
-        
-        const countQuery = `SELECT COUNT(*) AS total FROM account_show WHERE acc_kind = 0;`;
-        
-        const result = await executePaginatedQuery(baseQuery, countQuery, page, limit, pool);
-        
+
+        const request = pool.request();
+        request.input("limit", limit);
+        request.input("lastCode", lastCode);
+
+        const result = await request.query(query);
+
         res.json({
-            customers: result.data,
-            pagination: result.pagination
+            customers: result.recordset,
+            nextLastCode: result.recordset.length > 0 
+                ? result.recordset[result.recordset.length - 1].code 
+                : null
         });
+
     } catch (err) {
         console.error("❌ Error fetching customers:", err);
         res.status(500).json({ error: "Database fetch failed" });
     }
 });
+
 
 // ✅ GET كل الموردين
 router.get("/suppliers", async (req, res) => {
