@@ -6,10 +6,12 @@ const sale_invoicesRoutes = require("./routes/sale_invoices");
 const buy_invoicesRoutes = require("./routes/buy_invoices");
 const accountsRoutes = require("./routes/accounts");
 const settingsRoutes = require("./routes/settings");
+const authRoutes = require("./routes/auth");
 
 app.use(express.json());
 
 // API routes
+app.use("/api/auth", authRoutes);
 app.use("/api/sale_invoices", sale_invoicesRoutes);
 app.use("/api/buy_invoices", buy_invoicesRoutes);
 app.use("/api/accounts", accountsRoutes);
