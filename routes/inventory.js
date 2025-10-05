@@ -143,7 +143,7 @@ router.get("/over-stock", async (req, res) => {
         (item_balace * buy) AS total_cost
       FROM dbo.item_review
       WHERE item_balace >= item_maxmimm
-      ORDER BY (item_balace - item_maximum) DESC
+      ORDER BY (item_balace - item_maxmimm) DESC
       OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;
     `;
 
