@@ -6,6 +6,7 @@ const app = express();
 const sale_invoicesRoutes = require("./routes/sale_invoices");
 const buy_invoicesRoutes = require("./routes/buy_invoices");
 const accountsRoutes = require("./routes/accounts");
+const inventoryRoutes = require("./routes/inventory");
 // تم حذف auth routes 
 const subscriptionsRoutes = require("./routes/subscriptions");
 
@@ -24,6 +25,7 @@ app.get("/", (req, res) => {
 app.use("/api/sale_invoices", sale_invoicesRoutes);
 app.use("/api/buy_invoices", buy_invoicesRoutes);
 app.use("/api/accounts", accountsRoutes);
+app.use("/api/inventory", inventoryRoutes);
 app.use("/api/subscriptions", subscriptionsRoutes);
 
 

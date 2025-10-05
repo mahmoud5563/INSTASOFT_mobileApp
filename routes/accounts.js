@@ -150,7 +150,15 @@ router.get("/suppliers", async (req, res) => {
         const limit = Math.min(parseInt(req.query.limit) || 6, 100);
         
         const baseQuery = `
-            SELECT * FROM account_add 
+            SELECT 
+                code,
+                acc_name,
+                acc_phone1,
+                acc_adress,
+                acc_Balance_open as balance,
+                0 as credit,
+                0 as debit
+            FROM account_add 
             WHERE acc_kind = 1
             ORDER BY code ASC 
             OFFSET @offset ROWS 
@@ -264,6 +272,8 @@ router.get("/balances/customers", async (req, res) => {
                     a.code,
                     a.acc_name,
                     a.acc_Balance_open,
+                    acc_adress,
+                    acc_phone1,
                     ISNULL(SUM(t.trans_debit), 0) AS total_debit,
                     ISNULL(SUM(t.trans_credit), 0) AS total_credit,
                     a.acc_Balance_open + ISNULL(SUM(t.trans_debit), 0) - ISNULL(SUM(t.trans_credit), 0) AS balance
@@ -327,13 +337,15 @@ router.get("/balances/suppliers", async (req, res) => {
                     a.code,
                     a.acc_name,
                     a.acc_Balance_open,
+                    a.acc_adress,
+                    a.acc_phone1,
                     ISNULL(SUM(t.trans_debit), 0) AS total_debit,
                     ISNULL(SUM(t.trans_credit), 0) AS total_credit,
                     a.acc_Balance_open + ISNULL(SUM(t.trans_debit), 0) - ISNULL(SUM(t.trans_credit), 0) AS balance
                 FROM account_add a
                 LEFT JOIN account_trans t ON a.code = t.code
                 WHERE a.acc_kind = 1
-                GROUP BY a.code, a.acc_name, a.acc_Balance_open
+                GROUP BY a.code, a.acc_name, a.acc_Balance_open, a.acc_adress, a.acc_phone1
                 ORDER BY a.code ASC
                 OFFSET @offset ROWS
                 FETCH NEXT @limit ROWS ONLY;
@@ -349,8 +361,11 @@ router.get("/balances/suppliers", async (req, res) => {
             }
         });
     } catch (err) {
-        console.error("❌ Error fetching suppliers balances:", err);
-        res.status(500).json({ error: "Database fetch failed" });
+        console.error("❌ Error fetching suppliers balances:", err.message);
+        res.status(500).json({ 
+            error: "Database fetch failed",
+            details: err.message
+        });
     }
 });
 
