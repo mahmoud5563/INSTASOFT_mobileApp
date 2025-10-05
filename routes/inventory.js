@@ -285,6 +285,71 @@ router.get("/summary/total", async (req, res) => {
   }
 });
 
+// ✅ GET حركة صنف محدد
+router.get("/:item_code/movement", async (req, res) => {
+  try {
+    const { item_code } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // استعلام لجلب حركة الصنف
+    const mainQuery = `
+      SELECT 
+        ia.code,
+        ia.item_ar,
+        im.trans_date,
+        im.trans_statement,
+        im.trans_ward,
+        im.trans_monsrf
+      FROM item_add ia
+      INNER JOIN item_movement im ON ia.code = im.code
+      WHERE ia.code = @item_code
+      ORDER BY im.trans_date DESC
+      OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;
+    `;
+
+    // حساب العدد الإجمالي للحركات
+    const countQuery = `
+      SELECT COUNT(*) AS total
+      FROM item_add ia
+      INNER JOIN item_movement im ON ia.code = im.code
+      WHERE ia.code = @item_code;
+    `;
+
+    const totalResult = await pool.request()
+      .input("item_code", sql.Int, item_code)
+      .query(countQuery);
+
+    const totalMovements = totalResult.recordset[0].total;
+    const totalPages = Math.ceil(totalMovements / limit);
+
+    // جلب البيانات
+    const dataResult = await pool.request()
+      .input("item_code", sql.Int, item_code)
+      .input("offset", sql.Int, offset)
+      .input("limit", sql.Int, limit)
+      .query(mainQuery);
+
+    if (dataResult.recordset.length === 0) {
+      return res.status(404).json({ error: "Item not found or no movements" });
+    }
+
+    res.json({
+      item_movements: dataResult.recordset,
+      pagination: {
+        totalMovements,
+        totalPages,
+        currentPage: page,
+        itemsPerPage: limit,
+      },
+    });
+  } catch (err) {
+    console.error("❌ Error fetching item movement:", err);
+    res.status(500).json({ error: "Database fetch failed" });
+  }
+});
+
 // ✅ GET صنف محدد بالكود
 router.get("/:item_code", async (req, res) => {
   try {
