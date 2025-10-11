@@ -27,8 +27,7 @@ app.use("/api/buy_invoices", buy_invoicesRoutes);
 app.use("/api/accounts", accountsRoutes);
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/subscriptions", subscriptionsRoutes);
-
-
+//HARAAAAMMMMM//
 
 const PORT = process.env.PORT || 5000; 
 
