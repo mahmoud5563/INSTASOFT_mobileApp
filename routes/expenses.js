@@ -201,106 +201,10 @@ router.get("/:invoice_number", async (req, res) => {
     }
 });
 
-// ✅ GET مصاريف بتاريخ معين
-router.get("/date/:date", async (req, res) => {
-    try {
-        const { date } = req.params;
-        const page = parseInt(req.query.page) || 1;
-        const limit = Math.min(parseInt(req.query.limit) || 10, 100);
-        
-        const validation = validatePaginationParams(page, limit);
-        if (!validation.isValid) {
-            return res.status(400).json({ 
-                error: "بيانات غير صحيحة", 
-                details: validation.errors 
-            });
-        }
 
-        // التحقق من صحة التاريخ
-        const expenseDate = new Date(date);
-        if (isNaN(expenseDate.getTime())) {
-            return res.status(400).json({ 
-                error: "بيانات غير صحيحة", 
-                message: "تاريخ غير صحيح" 
-            });
-        }
-
-        const baseQuery = `
-            SELECT 
-                ea.invoice_number,
-                ea.Expenses_date,
-                ea.treasury_view,
-                ea.total_expenses,
-                ea.user_name
-            FROM Expenses_add ea
-            WHERE CAST(ea.Expenses_date AS DATE) = CAST(@date AS DATE)
-            ORDER BY ea.invoice_number DESC
-            OFFSET @offset ROWS 
-            FETCH NEXT @limit ROWS ONLY;
-        `;
-        
-        const countQuery = `
-            SELECT COUNT(*) AS total 
-            FROM Expenses_add ea
-            WHERE CAST(ea.Expenses_date AS DATE) = CAST(@date AS DATE);
-        `;
-        
-        const result = await executePaginatedQuery(baseQuery, countQuery, page, limit);
-        
-        // جلب تفاصيل المصاريف لكل فاتورة
-        const expensesWithDetails = await Promise.all(
-            result.data.map(async (expense) => {
-                try {
-                    console.log(`🔍 Fetching details for invoice: ${expense.invoice_number} (type: ${typeof expense.invoice_number})`);
-                    
-                    const detailsQuery = `
-                        SELECT 
-                            el.Exp_name,
-                            el.Exp_note,
-                            el.Exp_money
-                        FROM expenses_list el
-                        WHERE el.invoice_number = @invoice_number
-                        ORDER BY el.Exp_name;
-                    `;
-                    
-                    const detailsResult = await pool.request()
-                        .input('invoice_number', sql.Int, expense.invoice_number)
-                        .query(detailsQuery);
-                    
-                    console.log(`📊 Found ${detailsResult.recordset.length} details for invoice ${expense.invoice_number}`);
-                    
-                    return {
-                        ...expense,
-                        expenses_details: detailsResult.recordset
-                    };
-                } catch (detailError) {
-                    console.error(`❌ Error fetching details for invoice ${expense.invoice_number}:`, detailError.message);
-                    return {
-                        ...expense,
-                        expenses_details: []
-                    };
-                }
-            })
-        );
-        
-        res.json({
-            expenses: expensesWithDetails,
-            pagination: result.pagination,
-            date: date
-        });
-
-    } catch (err) {
-        console.error("❌ Error fetching expenses by date:", err.message);
-        res.status(500).json({ 
-            error: "خطأ في الخادم", 
-            message: "فشل في جلب المصاريف للتاريخ المحدد",
-            details: err.message
-        });
-    }
-});
 
 // ✅ GET إحصائيات المصاريف
-router.get("/stats/summary", async (req, res) => {
+router.get("/summary", async (req, res) => {
     try {
         const statsQuery = `
             SELECT 
