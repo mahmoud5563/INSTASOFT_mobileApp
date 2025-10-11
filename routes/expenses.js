@@ -134,6 +134,35 @@ router.get("/", async (req, res) => {
     }
 });
 
+// ✅ GET إحصائيات المصاريف
+router.get("/summary", async (req, res) => {
+    try {
+        const statsQuery = `
+            SELECT 
+                COUNT(*) as total_invoices,
+                SUM(ea.total_expenses) as total_amount,
+                AVG(ea.total_expenses) as average_amount,
+                MIN(ea.Expenses_date) as earliest_date,
+                MAX(ea.Expenses_date) as latest_date
+            FROM Expenses_add ea;
+        `;
+        
+        const result = await pool.request().query(statsQuery);
+        
+        res.json({
+            summary: result.recordset[0]
+        });
+
+    } catch (err) {
+        console.error("❌ Error fetching expenses summary:", err.message);
+        res.status(500).json({ 
+            error: "خطأ في الخادم", 
+            message: "فشل في جلب إحصائيات المصاريف",
+            details: err.message
+        });
+    }
+});
+
 // ✅ GET مصاريف فاتورة معينة
 router.get("/:invoice_number", async (req, res) => {
     try {
@@ -202,34 +231,5 @@ router.get("/:invoice_number", async (req, res) => {
 });
 
 
-
-// ✅ GET إحصائيات المصاريف
-router.get("/summary", async (req, res) => {
-    try {
-        const statsQuery = `
-            SELECT 
-                COUNT(*) as total_invoices,
-                SUM(ea.total_expenses) as total_amount,
-                AVG(ea.total_expenses) as average_amount,
-                MIN(ea.Expenses_date) as earliest_date,
-                MAX(ea.Expenses_date) as latest_date
-            FROM Expenses_add ea;
-        `;
-        
-        const result = await pool.request().query(statsQuery);
-        
-        res.json({
-            summary: result.recordset[0]
-        });
-
-    } catch (err) {
-        console.error("❌ Error fetching expenses summary:", err.message);
-        res.status(500).json({ 
-            error: "خطأ في الخادم", 
-            message: "فشل في جلب إحصائيات المصاريف",
-            details: err.message
-        });
-    }
-});
 
 module.exports = router;
