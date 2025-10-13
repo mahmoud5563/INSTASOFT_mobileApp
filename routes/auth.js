@@ -6,6 +6,29 @@ const bcrypt = require('bcryptjs');
 const { executeQuery } = require("../config/db");
 const { generateToken, authenticateToken } = require("../middleware/auth");
 
+// دالة لتحديث حالة المستخدم بناءً على الاشتراك
+const updateUserActiveStatus = async (userId) => {
+    try {
+        const updateQuery = `
+            UPDATE app_users 
+            SET is_active = CASE 
+                WHEN EXISTS (
+                    SELECT 1 FROM subscriptions 
+                    WHERE user_id = @user_id 
+                    AND is_active = 1 
+                    AND end_date >= CAST(GETDATE() AS DATE)
+                ) THEN 1
+                ELSE 0
+            END
+            WHERE id = @user_id
+        `;
+        
+        await executeQuery(updateQuery, { user_id: userId });
+    } catch (error) {
+        console.error('❌ Error updating user active status:', error.message);
+    }
+};
+
 // دالة التحقق من صحة البيانات
 const validateLoginData = (username, password) => {
     const errors = [];
@@ -83,15 +106,18 @@ router.post("/login", async (req, res) => {
                 u.password,
                 u.full_name,
                 u.phone,
-                u.is_active,
                 u.last_login,
                 s.plan_type,
                 s.start_date,
                 s.end_date,
-                s.is_active as subscription_active
+                s.is_active as subscription_active,
+                CASE 
+                    WHEN s.is_active = 1 AND s.end_date >= CAST(GETDATE() AS DATE) THEN 1
+                    ELSE 0
+                END as is_active
             FROM app_users u
             LEFT JOIN subscriptions s ON u.id = s.user_id AND s.is_active = 1
-            WHERE (u.username = @username OR u.email = @username) AND u.is_active = 1
+            WHERE (u.username = @username OR u.email = @username)
         `;
 
         const userResult = await executeQuery(userQuery, { username });
@@ -111,6 +137,15 @@ router.post("/login", async (req, res) => {
             return res.status(401).json({
                 error: "فشل تسجيل الدخول",
                 message: "اسم المستخدم أو كلمة المرور غير صحيحة"
+            });
+        }
+
+        // التحقق من حالة المستخدم (يعتمد على الاشتراك)
+        if (user.is_active === 0) {
+            return res.status(403).json({
+                error: "حساب غير نشط",
+                message: "حسابك غير نشط. يرجى تجديد الاشتراك أو إنشاء اشتراك جديد",
+                subscription_required: true
             });
         }
 
@@ -372,7 +407,7 @@ router.get("/subscription", authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ POST تجديد الاشتراك (للمدير فقط - يمكن إضافة صلاحيات)
+// ✅ POST تجديد الاشتراك (استبدال كامل)
 router.post("/renew-subscription", authenticateToken, async (req, res) => {
     try {
         const { plan_type, months } = req.body;
@@ -421,6 +456,9 @@ router.post("/renew-subscription", authenticateToken, async (req, res) => {
             end_date: endDate.toISOString().split('T')[0]
         });
 
+        // تحديث حالة المستخدم بناءً على الاشتراك الجديد
+        await updateUserActiveStatus(req.user.id);
+
         res.json({
             message: "تم تجديد الاشتراك بنجاح",
             subscription: {
@@ -437,6 +475,246 @@ router.post("/renew-subscription", authenticateToken, async (req, res) => {
         res.status(500).json({
             error: "خطأ في الخادم",
             message: "فشل في تجديد الاشتراك"
+        });
+    }
+});
+
+// ✅ POST إضافة أشهر للاشتراك الحالي
+router.post("/extend-subscription", authenticateToken, async (req, res) => {
+    try {
+        const { months } = req.body;
+        
+        if (!months) {
+            return res.status(400).json({
+                error: "بيانات غير صحيحة",
+                message: "عدد الأشهر مطلوب"
+            });
+        }
+        
+        if (months < 1 || months > 12) {
+            return res.status(400).json({
+                error: "بيانات غير صحيحة",
+                message: "عدد الأشهر يجب أن يكون بين 1 و 12"
+            });
+        }
+
+        // جلب الاشتراك الحالي
+        const currentSubscriptionQuery = `
+            SELECT plan_type, start_date, end_date, is_active
+            FROM subscriptions 
+            WHERE user_id = @user_id AND is_active = 1
+        `;
+        
+        const currentSubscription = await executeQuery(currentSubscriptionQuery, { user_id: req.user.id });
+        
+        if (currentSubscription.length === 0) {
+            return res.status(404).json({
+                error: "لا يوجد اشتراك",
+                message: "لا يوجد اشتراك نشط للمستخدم"
+            });
+        }
+
+        const subscription = currentSubscription[0];
+        
+        // حساب التاريخ الجديد بناءً على تاريخ انتهاء الاشتراك الحالي
+        const currentEndDate = new Date(subscription.end_date);
+        const newEndDate = new Date(currentEndDate);
+        newEndDate.setMonth(newEndDate.getMonth() + months);
+
+        // تحديث الاشتراك
+        const updateSubscriptionQuery = `
+            UPDATE subscriptions 
+            SET end_date = @new_end_date,
+                updated_at = GETDATE()
+            WHERE user_id = @user_id AND is_active = 1
+        `;
+        
+        await executeQuery(updateSubscriptionQuery, {
+            user_id: req.user.id,
+            new_end_date: newEndDate.toISOString().split('T')[0]
+        });
+
+        // تحديث حالة المستخدم
+        await updateUserActiveStatus(req.user.id);
+
+        res.json({
+            message: "تم تمديد الاشتراك بنجاح",
+            subscription: {
+                plan_type: subscription.plan_type,
+                start_date: subscription.start_date,
+                end_date: newEndDate.toISOString().split('T')[0],
+                is_active: true,
+                days_remaining: Math.ceil((newEndDate - new Date()) / (1000 * 60 * 60 * 24)),
+                months_added: months
+            }
+        });
+
+    } catch (err) {
+        console.error("❌ Extend subscription error:", err.message);
+        res.status(500).json({
+            error: "خطأ في الخادم",
+            message: "فشل في تمديد الاشتراك"
+        });
+    }
+});
+
+// ✅ POST تغيير نوع الاشتراك مع الحفاظ على التاريخ
+router.post("/change-subscription-plan", authenticateToken, async (req, res) => {
+    try {
+        const { new_plan_type } = req.body;
+        
+        if (!new_plan_type) {
+            return res.status(400).json({
+                error: "بيانات غير صحيحة",
+                message: "نوع الاشتراك الجديد مطلوب"
+            });
+        }
+
+        // جلب الاشتراك الحالي
+        const currentSubscriptionQuery = `
+            SELECT plan_type, start_date, end_date, is_active
+            FROM subscriptions 
+            WHERE user_id = @user_id AND is_active = 1
+        `;
+        
+        const currentSubscription = await executeQuery(currentSubscriptionQuery, { user_id: req.user.id });
+        
+        if (currentSubscription.length === 0) {
+            return res.status(404).json({
+                error: "لا يوجد اشتراك",
+                message: "لا يوجد اشتراك نشط للمستخدم"
+            });
+        }
+
+        const subscription = currentSubscription[0];
+        
+        // تحديث نوع الاشتراك فقط
+        const updatePlanQuery = `
+            UPDATE subscriptions 
+            SET plan_type = @new_plan_type,
+                updated_at = GETDATE()
+            WHERE user_id = @user_id AND is_active = 1
+        `;
+        
+        await executeQuery(updatePlanQuery, {
+            user_id: req.user.id,
+            new_plan_type
+        });
+
+        res.json({
+            message: "تم تغيير نوع الاشتراك بنجاح",
+            subscription: {
+                plan_type: new_plan_type,
+                start_date: subscription.start_date,
+                end_date: subscription.end_date,
+                is_active: true,
+                days_remaining: Math.ceil((new Date(subscription.end_date) - new Date()) / (1000 * 60 * 60 * 24)),
+                previous_plan: subscription.plan_type
+            }
+        });
+
+    } catch (err) {
+        console.error("❌ Change subscription plan error:", err.message);
+        res.status(500).json({
+            error: "خطأ في الخادم",
+            message: "فشل في تغيير نوع الاشتراك"
+        });
+    }
+});
+
+// ✅ POST تحديث حالة جميع المستخدمين بناءً على الاشتراكات
+router.post("/update-all-users-status", authenticateToken, async (req, res) => {
+    try {
+        const updateAllQuery = `
+            UPDATE app_users 
+            SET is_active = CASE 
+                WHEN EXISTS (
+                    SELECT 1 FROM subscriptions 
+                    WHERE user_id = app_users.id 
+                    AND is_active = 1 
+                    AND end_date >= CAST(GETDATE() AS DATE)
+                ) THEN 1
+                ELSE 0
+            END
+        `;
+        
+        await executeQuery(updateAllQuery);
+        
+        // جلب إحصائيات التحديث
+        const statsQuery = `
+            SELECT 
+                COUNT(*) as total_users,
+                SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active_users,
+                SUM(CASE WHEN is_active = 0 THEN 1 ELSE 0 END) as inactive_users
+            FROM app_users
+        `;
+        
+        const stats = await executeQuery(statsQuery);
+        
+        res.json({
+            message: "تم تحديث حالة جميع المستخدمين بنجاح",
+            statistics: stats[0]
+        });
+
+    } catch (err) {
+        console.error("❌ Update all users status error:", err.message);
+        res.status(500).json({
+            error: "خطأ في الخادم",
+            message: "فشل في تحديث حالة المستخدمين"
+        });
+    }
+});
+
+// ✅ GET حالة المستخدم الحالي
+router.get("/user-status", authenticateToken, async (req, res) => {
+    try {
+        const statusQuery = `
+            SELECT 
+                u.id,
+                u.username,
+                u.is_active,
+                s.plan_type,
+                s.start_date,
+                s.end_date,
+                s.is_active as subscription_active,
+                CASE 
+                    WHEN s.is_active = 1 AND s.end_date >= CAST(GETDATE() AS DATE) THEN 1
+                    ELSE 0
+                END as calculated_active
+            FROM app_users u
+            LEFT JOIN subscriptions s ON u.id = s.user_id AND s.is_active = 1
+            WHERE u.id = @user_id
+        `;
+        
+        const result = await executeQuery(statusQuery, { user_id: req.user.id });
+        
+        if (result.length === 0) {
+            return res.status(404).json({
+                error: "مستخدم غير موجود"
+            });
+        }
+        
+        const userStatus = result[0];
+        
+        res.json({
+            user_id: userStatus.id,
+            username: userStatus.username,
+            is_active_in_db: userStatus.is_active,
+            calculated_active: userStatus.calculated_active,
+            subscription: {
+                plan_type: userStatus.plan_type,
+                start_date: userStatus.start_date,
+                end_date: userStatus.end_date,
+                is_active: userStatus.subscription_active
+            },
+            needs_update: userStatus.is_active !== userStatus.calculated_active
+        });
+
+    } catch (err) {
+        console.error("❌ Get user status error:", err.message);
+        res.status(500).json({
+            error: "خطأ في الخادم",
+            message: "فشل في جلب حالة المستخدم"
         });
     }
 });

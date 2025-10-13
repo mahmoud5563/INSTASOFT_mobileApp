@@ -252,6 +252,99 @@ Authorization: Bearer YOUR_JWT_TOKEN
 ]
 ```
 
+### 2.4 تحديث حالة جميع المستخدمين
+```http
+POST /api/auth/update-all-users-status
+Authorization: Bearer YOUR_JWT_TOKEN
+```
+
+**الاستجابة:**
+```json
+{
+    "message": "تم تحديث حالة جميع المستخدمين بنجاح",
+    "statistics": {
+        "total_users": 10,
+        "active_users": 7,
+        "inactive_users": 3
+    }
+}
+```
+
+### 2.5 حالة المستخدم الحالي
+```http
+GET /api/auth/user-status
+Authorization: Bearer YOUR_JWT_TOKEN
+```
+
+**الاستجابة:**
+```json
+{
+    "user_id": 1,
+    "username": "ahmed123",
+    "is_active_in_db": 1,
+    "calculated_active": 1,
+    "subscription": {
+        "plan_type": "premium",
+        "start_date": "2024-01-15",
+        "end_date": "2024-07-15",
+        "is_active": true
+    },
+    "needs_update": false
+}
+```
+
+### 2.6 تمديد الاشتراك (إضافة أشهر للاشتراك الحالي)
+```http
+POST /api/auth/extend-subscription
+Authorization: Bearer YOUR_JWT_TOKEN
+Content-Type: application/json
+
+{
+    "months": 2
+}
+```
+
+**الاستجابة:**
+```json
+{
+    "message": "تم تمديد الاشتراك بنجاح",
+    "subscription": {
+        "plan_type": "premium",
+        "start_date": "2024-01-15",
+        "end_date": "2024-09-15",
+        "is_active": true,
+        "days_remaining": 245,
+        "months_added": 2
+    }
+}
+```
+
+### 2.7 تغيير نوع الاشتراك (مع الحفاظ على التاريخ)
+```http
+POST /api/auth/change-subscription-plan
+Authorization: Bearer YOUR_JWT_TOKEN
+Content-Type: application/json
+
+{
+    "new_plan_type": "enterprise"
+}
+```
+
+**الاستجابة:**
+```json
+{
+    "message": "تم تغيير نوع الاشتراك بنجاح",
+    "subscription": {
+        "plan_type": "enterprise",
+        "start_date": "2024-01-15",
+        "end_date": "2024-07-15",
+        "is_active": true,
+        "days_remaining": 182,
+        "previous_plan": "premium"
+    }
+}
+```
+
 ---
 
 ## 📊 3. APIs الفواتير والمصاريف

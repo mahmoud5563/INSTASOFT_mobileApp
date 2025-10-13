@@ -46,15 +46,18 @@ const authenticateToken = async (req, res, next) => {
                 u.email,
                 u.full_name,
                 u.phone,
-                u.is_active,
                 u.last_login,
                 s.plan_type,
                 s.start_date,
                 s.end_date,
-                s.is_active as subscription_active
+                s.is_active as subscription_active,
+                CASE 
+                    WHEN s.is_active = 1 AND s.end_date >= CAST(GETDATE() AS DATE) THEN 1
+                    ELSE 0
+                END as is_active
             FROM app_users u
             LEFT JOIN subscriptions s ON u.id = s.user_id AND s.is_active = 1
-            WHERE u.id = @user_id AND u.is_active = 1
+            WHERE u.id = @user_id
         `;
 
         const userResult = await executeQuery(userQuery, { user_id: decoded.user_id });
@@ -62,11 +65,20 @@ const authenticateToken = async (req, res, next) => {
         if (userResult.length === 0) {
             return res.status(401).json({
                 error: 'غير مصرح',
-                message: 'المستخدم غير موجود أو غير نشط'
+                message: 'المستخدم غير موجود'
             });
         }
 
         const user = userResult[0];
+
+        // التحقق من حالة المستخدم (يعتمد على الاشتراك)
+        if (user.is_active === 0) {
+            return res.status(403).json({
+                error: 'حساب غير نشط',
+                message: 'حسابك غير نشط. يرجى تجديد الاشتراك أو إنشاء اشتراك جديد',
+                subscription_required: true
+            });
+        }
 
         // التحقق من صحة الاشتراك
         let subscriptionStatus = {
