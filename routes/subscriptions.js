@@ -1,10 +1,10 @@
 const express = require("express");
 const router = express.Router();
-const executeQuery = require("../config/db"); // زي ما عامل في باقي الروتس
-// تم إزالة الـ auth middleware
+const { executeQuery } = require("../config/db");
+const { authenticateToken } = require("../middleware/auth");
 
 // 📌 Get all subscriptions
-router.get("/", async (req, res) => {
+router.get("/", authenticateToken, async (req, res) => {
   try {
     const result = await executeQuery(`
       SELECT s.id, s.plan_type, s.start_date, s.end_date, s.is_active, u.username, u.email
@@ -20,7 +20,7 @@ router.get("/", async (req, res) => {
 });
 
 // 📌 Get subscriptions for one user
-router.get("/user/:id", async (req, res) => {
+router.get("/user/:id", authenticateToken, async (req, res) => {
   try {
     const result = await executeQuery(
       `SELECT id, plan_type, start_date, end_date, is_active 
@@ -37,7 +37,7 @@ router.get("/user/:id", async (req, res) => {
 });
 
 // 📌 Add new subscription
-router.post("/", async (req, res) => {
+router.post("/", authenticateToken, async (req, res) => {
   try {
     const { user_id, plan_type, start_date, end_date } = req.body;
 

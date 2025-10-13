@@ -3,7 +3,8 @@
 const express = require("express");
 const router = express.Router();
 // تأكد من أن هذا المسار صحيح
-const { pool, sql, executeQuery } = require("../config/db"); 
+const { pool, sql, executeQuery } = require("../config/db");
+const { authenticateToken } = require("../middleware/auth"); 
 
 // دالة مساعدة لتحسين نظام الصفحات
 const executePaginatedQuery = async (baseQuery, countQuery, page, limit) => {

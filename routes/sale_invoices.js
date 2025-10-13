@@ -1,9 +1,10 @@
 const express = require("express");
 const router = express.Router();
 const { pool, sql } = require("../config/db");
+const { authenticateToken } = require("../middleware/auth");
 
 // ✅ GET all sale invoices - مُعدَّل
-router.get("/", async (req, res) => {
+router.get("/", authenticateToken, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 5;

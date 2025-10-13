@@ -3,6 +3,7 @@
 const express = require("express");
 const router = express.Router();
 const { pool, sql, executeQuery } = require("../config/db");
+const { authenticateToken } = require("../middleware/auth");
 
 // دالة مساعدة للتحقق من صحة معاملات الصفحات
 const validatePaginationParams = (page, limit) => {
@@ -50,7 +51,7 @@ const executePaginatedQuery = async (baseQuery, countQuery, page, limit) => {
 };
 
 // ✅ GET جميع المصاريف مع تفاصيلها
-router.get("/", async (req, res) => {
+router.get("/", authenticateToken, async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = Math.min(parseInt(req.query.limit) || 10, 100);
@@ -135,7 +136,7 @@ router.get("/", async (req, res) => {
 });
 
 // ✅ GET إحصائيات المصاريف
-router.get("/summary", async (req, res) => {
+router.get("/summary", authenticateToken, async (req, res) => {
     try {
         const statsQuery = `
             SELECT 
@@ -164,7 +165,7 @@ router.get("/summary", async (req, res) => {
 });
 
 // ✅ GET مصاريف فاتورة معينة
-router.get("/:invoice_number", async (req, res) => {
+router.get("/:invoice_number", authenticateToken, async (req, res) => {
     try {
         const { invoice_number } = req.params;
         
