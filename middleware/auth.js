@@ -47,6 +47,7 @@ const authenticateToken = async (req, res, next) => {
                 u.full_name,
                 u.phone,
                 u.last_login,
+                u.created_at,
                 s.plan_type,
                 s.start_date,
                 s.end_date,
@@ -72,7 +73,14 @@ const authenticateToken = async (req, res, next) => {
         const user = userResult[0];
 
         // التحقق من حالة المستخدم (يعتمد على الاشتراك)
-        if (user.is_active === 0) {
+        // السماح للمستخدمين الجدد بتسجيل الدخول لفترة تجريبية (7 أيام)
+        const userCreatedDate = new Date(user.created_at || new Date());
+        const trialPeriodDays = 7;
+        const trialEndDate = new Date(userCreatedDate);
+        trialEndDate.setDate(trialEndDate.getDate() + trialPeriodDays);
+        const isInTrialPeriod = new Date() <= trialEndDate;
+        
+        if (user.is_active === 0 && !isInTrialPeriod) {
             return res.status(403).json({
                 error: 'حساب غير نشط',
                 message: 'حسابك غير نشط. يرجى تجديد الاشتراك أو إنشاء اشتراك جديد',
@@ -86,10 +94,24 @@ const authenticateToken = async (req, res, next) => {
             plan_type: null,
             start_date: null,
             end_date: null,
-            days_remaining: 0
+            days_remaining: 0,
+            is_trial: false,
+            trial_days_remaining: 0
         };
 
-        if (user.subscription_active && user.end_date) {
+        // التحقق من الفترة التجريبية
+        if (isInTrialPeriod) {
+            const trialDaysRemaining = Math.ceil((trialEndDate - new Date()) / (1000 * 60 * 60 * 24));
+            subscriptionStatus = {
+                is_active: true,
+                plan_type: "trial",
+                start_date: userCreatedDate.toISOString().split('T')[0],
+                end_date: trialEndDate.toISOString().split('T')[0],
+                days_remaining: Math.max(0, trialDaysRemaining),
+                is_trial: true,
+                trial_days_remaining: Math.max(0, trialDaysRemaining)
+            };
+        } else if (user.subscription_active && user.end_date) {
             const subscriptionEndDate = new Date(user.end_date);
             const currentDate = new Date();
             const daysRemaining = Math.ceil((subscriptionEndDate - currentDate) / (1000 * 60 * 60 * 24));
@@ -99,7 +121,9 @@ const authenticateToken = async (req, res, next) => {
                 plan_type: user.plan_type,
                 start_date: user.start_date,
                 end_date: user.end_date,
-                days_remaining: Math.max(0, daysRemaining)
+                days_remaining: Math.max(0, daysRemaining),
+                is_trial: false,
+                trial_days_remaining: 0
             };
             
             if (currentDate > subscriptionEndDate) {

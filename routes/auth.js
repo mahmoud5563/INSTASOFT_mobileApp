@@ -107,6 +107,7 @@ router.post("/login", async (req, res) => {
                 u.full_name,
                 u.phone,
                 u.last_login,
+                u.created_at,
                 s.plan_type,
                 s.start_date,
                 s.end_date,
@@ -141,7 +142,14 @@ router.post("/login", async (req, res) => {
         }
 
         // التحقق من حالة المستخدم (يعتمد على الاشتراك)
-        if (user.is_active === 0) {
+        // السماح للمستخدمين الجدد بتسجيل الدخول لفترة تجريبية (7 أيام)
+        const userCreatedDate = new Date(user.created_at || new Date());
+        const trialPeriodDays = 7;
+        const trialEndDate = new Date(userCreatedDate);
+        trialEndDate.setDate(trialEndDate.getDate() + trialPeriodDays);
+        const isInTrialPeriod = new Date() <= trialEndDate;
+        
+        if (user.is_active === 0 && !isInTrialPeriod) {
             return res.status(403).json({
                 error: "حساب غير نشط",
                 message: "حسابك غير نشط. يرجى تجديد الاشتراك أو إنشاء اشتراك جديد",
@@ -164,10 +172,24 @@ router.post("/login", async (req, res) => {
             plan_type: null,
             start_date: null,
             end_date: null,
-            days_remaining: 0
+            days_remaining: 0,
+            is_trial: false,
+            trial_days_remaining: 0
         };
 
-        if (user.subscription_active && user.end_date) {
+        // التحقق من الفترة التجريبية
+        if (isInTrialPeriod) {
+            const trialDaysRemaining = Math.ceil((trialEndDate - new Date()) / (1000 * 60 * 60 * 24));
+            subscriptionStatus = {
+                is_active: true,
+                plan_type: "trial",
+                start_date: userCreatedDate.toISOString().split('T')[0],
+                end_date: trialEndDate.toISOString().split('T')[0],
+                days_remaining: Math.max(0, trialDaysRemaining),
+                is_trial: true,
+                trial_days_remaining: Math.max(0, trialDaysRemaining)
+            };
+        } else if (user.subscription_active && user.end_date) {
             const subscriptionEndDate = new Date(user.end_date);
             const currentDate = new Date();
             const daysRemaining = Math.ceil((subscriptionEndDate - currentDate) / (1000 * 60 * 60 * 24));
@@ -177,7 +199,9 @@ router.post("/login", async (req, res) => {
                 plan_type: user.plan_type,
                 start_date: user.start_date,
                 end_date: user.end_date,
-                days_remaining: Math.max(0, daysRemaining)
+                days_remaining: Math.max(0, daysRemaining),
+                is_trial: false,
+                trial_days_remaining: 0
             };
         }
 
@@ -403,6 +427,165 @@ router.get("/subscription", authenticateToken, async (req, res) => {
         res.status(500).json({
             error: "خطأ في الخادم",
             message: "فشل في جلب معلومات الاشتراك"
+        });
+    }
+});
+
+// ✅ POST إنشاء اشتراك جديد (بدون توكن - للمستخدمين الجدد)
+router.post("/create-subscription", async (req, res) => {
+    try {
+        const { username, password, plan_type, months } = req.body;
+        
+        if (!username || !password || !plan_type || !months) {
+            return res.status(400).json({
+                error: "بيانات غير صحيحة",
+                message: "اسم المستخدم وكلمة المرور ونوع الاشتراك وعدد الأشهر مطلوبة"
+            });
+        }
+        
+        if (months < 1 || months > 12) {
+            return res.status(400).json({
+                error: "بيانات غير صحيحة",
+                message: "عدد الأشهر يجب أن يكون بين 1 و 12"
+            });
+        }
+
+        // التحقق من صحة بيانات تسجيل الدخول
+        const validation = validateLoginData(username, password);
+        if (!validation.isValid) {
+            return res.status(400).json({
+                error: "بيانات غير صحيحة",
+                details: validation.errors
+            });
+        }
+
+        // البحث عن المستخدم
+        const userQuery = `
+            SELECT 
+                u.id,
+                u.username,
+                u.email,
+                u.password,
+                u.full_name,
+                u.phone,
+                u.last_login,
+                u.created_at,
+                s.plan_type,
+                s.start_date,
+                s.end_date,
+                s.is_active as subscription_active,
+                CASE 
+                    WHEN s.is_active = 1 AND s.end_date >= CAST(GETDATE() AS DATE) THEN 1
+                    ELSE 0
+                END as is_active
+            FROM app_users u
+            LEFT JOIN subscriptions s ON u.id = s.user_id AND s.is_active = 1
+            WHERE (u.username = @username OR u.email = @username)
+        `;
+
+        const userResult = await executeQuery(userQuery, { username });
+        
+        if (userResult.length === 0) {
+            return res.status(401).json({
+                error: "فشل التحقق",
+                message: "اسم المستخدم أو كلمة المرور غير صحيحة"
+            });
+        }
+
+        const user = userResult[0];
+
+        // التحقق من كلمة المرور
+        const isPasswordValid = await bcrypt.compare(password, user.password);
+        if (!isPasswordValid) {
+            return res.status(401).json({
+                error: "فشل التحقق",
+                message: "اسم المستخدم أو كلمة المرور غير صحيحة"
+            });
+        }
+
+        // التحقق من أن المستخدم لا يملك اشتراك نشط
+        if (user.subscription_active && user.end_date) {
+            const subscriptionEndDate = new Date(user.end_date);
+            const currentDate = new Date();
+            if (currentDate <= subscriptionEndDate) {
+                return res.status(409).json({
+                    error: "اشتراك موجود",
+                    message: "لديك اشتراك نشط بالفعل",
+                    subscription: {
+                        plan_type: user.plan_type,
+                        start_date: user.start_date,
+                        end_date: user.end_date,
+                        is_active: true
+                    }
+                });
+            }
+        }
+
+        // حساب تاريخ الانتهاء
+        const currentDate = new Date();
+        const endDate = new Date();
+        endDate.setMonth(endDate.getMonth() + months);
+
+        // إنشاء الاشتراك الجديد
+        const createSubscriptionQuery = `
+            INSERT INTO subscriptions (user_id, plan_type, start_date, end_date, is_active)
+            VALUES (@user_id, @plan_type, @start_date, @end_date, 1)
+        `;
+        
+        await executeQuery(createSubscriptionQuery, {
+            user_id: user.id,
+            plan_type,
+            start_date: currentDate.toISOString().split('T')[0],
+            end_date: endDate.toISOString().split('T')[0]
+        });
+
+        // تحديث حالة المستخدم
+        await updateUserActiveStatus(user.id);
+
+        // إنشاء التوكن
+        const subscriptionStatus = {
+            is_active: true,
+            plan_type,
+            start_date: currentDate.toISOString().split('T')[0],
+            end_date: endDate.toISOString().split('T')[0],
+            days_remaining: Math.ceil((endDate - currentDate) / (1000 * 60 * 60 * 24)),
+            is_trial: false,
+            trial_days_remaining: 0
+        };
+
+        const tokenData = {
+            user_id: user.id,
+            username: user.username,
+            email: user.email,
+            subscription: subscriptionStatus
+        };
+
+        const token = generateToken(tokenData);
+
+        // إرجاع البيانات
+        const userResponse = {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            full_name: user.full_name,
+            phone: user.phone,
+            last_login: user.last_login,
+            subscription: subscriptionStatus
+        };
+
+        res.json({
+            message: "تم إنشاء الاشتراك بنجاح",
+            user: userResponse,
+            token: token,
+            token_type: "Bearer"
+        });
+
+    } catch (err) {
+        console.error("❌ Create subscription error:", err.message);
+        res.status(500).json({
+            error: "خطأ في الخادم",
+            message: "فشل في إنشاء الاشتراك",
+            details: err.message
         });
     }
 });
