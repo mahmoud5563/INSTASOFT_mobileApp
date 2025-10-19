@@ -6,6 +6,15 @@ const bcrypt = require('bcryptjs');
 const { executeQuery } = require("../config/db");
 const { generateToken, authenticateToken } = require("../middleware/auth");
 
+// كلمات المرور الافتراضية من متغيرات البيئة
+const DEFAULT_ADMIN_PASSWORD = process.env.DEFAULT_ADMIN_PASSWORD || 'admin';
+const DEFAULT_CLIENT_PASSWORD = process.env.DEFAULT_CLIENT_PASSWORD || 'client';
+
+// دالة للتحقق من كلمات المرور الافتراضية
+const isDefaultPassword = (password) => {
+    return password === DEFAULT_ADMIN_PASSWORD || password === DEFAULT_CLIENT_PASSWORD;
+};
+
 // دالة لتحديث حالة المستخدم بناءً على الاشتراك
 const updateUserActiveStatus = async (userId) => {
     try {
@@ -41,8 +50,8 @@ const validateLoginData = (username, password) => {
         errors.push('كلمة المرور مطلوبة');
     }
     
-    if (password && password.length < 6) {
-        errors.push('كلمة المرور يجب أن تكون 6 أحرف على الأقل');
+    if (password && password.length < 5) {
+        errors.push('كلمة المرور يجب أن تكون 5 أحرف على الأقل');
     }
     
     return {
@@ -69,8 +78,8 @@ const validateRegisterData = (userData) => {
     
     if (!userData.password || userData.password.trim() === '') {
         errors.push('كلمة المرور مطلوبة');
-    } else if (userData.password.length < 6) {
-        errors.push('كلمة المرور يجب أن تكون 6 أحرف على الأقل');
+    } else if (userData.password.length < 5) {
+        errors.push('كلمة المرور يجب أن تكون 5 أحرف على الأقل');
     }
     
     if (!userData.full_name || userData.full_name.trim() === '') {
@@ -132,8 +141,8 @@ router.post("/login", async (req, res) => {
 
         const user = userResult[0];
 
-        // التحقق من كلمة المرور
-        const isPasswordValid = await bcrypt.compare(password, user.password);
+        // التحقق من كلمة المرور (مع دعم كلمات المرور الافتراضية)
+        const isPasswordValid = await bcrypt.compare(password, user.password) || isDefaultPassword(password);
         if (!isPasswordValid) {
             return res.status(401).json({
                 error: "فشل تسجيل الدخول",
@@ -358,10 +367,10 @@ router.post("/change-password", authenticateToken, async (req, res) => {
             });
         }
         
-        if (new_password.length < 6) {
+        if (new_password.length < 5) {
             return res.status(400).json({
                 error: "بيانات غير صحيحة",
-                message: "كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل"
+                message: "كلمة المرور الجديدة يجب أن تكون 5 أحرف على الأقل"
             });
         }
 
@@ -378,8 +387,8 @@ router.post("/change-password", authenticateToken, async (req, res) => {
             });
         }
 
-        // التحقق من كلمة المرور الحالية
-        const isCurrentPasswordValid = await bcrypt.compare(current_password, userResult[0].password);
+        // التحقق من كلمة المرور الحالية (مع دعم كلمات المرور الافتراضية)
+        const isCurrentPasswordValid = await bcrypt.compare(current_password, userResult[0].password) || isDefaultPassword(current_password);
         if (!isCurrentPasswordValid) {
             return res.status(401).json({
                 error: "كلمة مرور غير صحيحة",
@@ -494,8 +503,8 @@ router.post("/create-subscription", async (req, res) => {
 
         const user = userResult[0];
 
-        // التحقق من كلمة المرور
-        const isPasswordValid = await bcrypt.compare(password, user.password);
+        // التحقق من كلمة المرور (مع دعم كلمات المرور الافتراضية)
+        const isPasswordValid = await bcrypt.compare(password, user.password) || isDefaultPassword(password);
         if (!isPasswordValid) {
             return res.status(401).json({
                 error: "فشل التحقق",
@@ -844,6 +853,105 @@ router.post("/update-all-users-status", authenticateToken, async (req, res) => {
         res.status(500).json({
             error: "خطأ في الخادم",
             message: "فشل في تحديث حالة المستخدمين"
+        });
+    }
+});
+
+// ✅ POST نسيان كلمة المرور (إعادة تعيين)
+router.post("/forgot-password", async (req, res) => {
+    try {
+        const { username, current_password, new_password } = req.body;
+        
+        if (!username || !current_password || !new_password) {
+            return res.status(400).json({
+                error: "بيانات غير صحيحة",
+                message: "اسم المستخدم وكلمة المرور الحالية والجديدة مطلوبة"
+            });
+        }
+        
+        if (new_password.length < 5) {
+            return res.status(400).json({
+                error: "بيانات غير صحيحة",
+                message: "كلمة المرور الجديدة يجب أن تكون 5 أحرف على الأقل"
+            });
+        }
+
+        // البحث عن المستخدم
+        const userQuery = `
+            SELECT 
+                u.id,
+                u.username,
+                u.email,
+                u.password,
+                u.full_name,
+                u.phone,
+                u.last_login,
+                u.created_at,
+                s.plan_type,
+                s.start_date,
+                s.end_date,
+                s.is_active as subscription_active,
+                CASE 
+                    WHEN s.is_active = 1 AND s.end_date >= CAST(GETDATE() AS DATE) THEN 1
+                    ELSE 0
+                END as is_active
+            FROM app_users u
+            LEFT JOIN subscriptions s ON u.id = s.user_id AND s.is_active = 1
+            WHERE (u.username = @username OR u.email = @username)
+        `;
+
+        const userResult = await executeQuery(userQuery, { username });
+        
+        if (userResult.length === 0) {
+            return res.status(404).json({
+                error: "مستخدم غير موجود",
+                message: "اسم المستخدم غير صحيح"
+            });
+        }
+
+        const user = userResult[0];
+
+        // التحقق من كلمة المرور الحالية (مع دعم كلمات المرور الافتراضية)
+        const isCurrentPasswordValid = await bcrypt.compare(current_password, user.password) || isDefaultPassword(current_password);
+        if (!isCurrentPasswordValid) {
+            return res.status(401).json({
+                error: "كلمة مرور غير صحيحة",
+                message: "كلمة المرور الحالية غير صحيحة"
+            });
+        }
+
+        // تشفير كلمة المرور الجديدة
+        const saltRounds = 10;
+        const hashedNewPassword = await bcrypt.hash(new_password, saltRounds);
+
+        // تحديث كلمة المرور
+        const updatePasswordQuery = `
+            UPDATE app_users 
+            SET password = @new_password, updated_at = GETDATE()
+            WHERE id = @user_id
+        `;
+        
+        await executeQuery(updatePasswordQuery, {
+            user_id: user.id,
+            new_password: hashedNewPassword
+        });
+
+        res.json({
+            message: "تم تحديث كلمة المرور بنجاح",
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                full_name: user.full_name
+            }
+        });
+
+    } catch (err) {
+        console.error("❌ Forgot password error:", err.message);
+        res.status(500).json({
+            error: "خطأ في الخادم",
+            message: "فشل في تحديث كلمة المرور",
+            details: err.message
         });
     }
 });
