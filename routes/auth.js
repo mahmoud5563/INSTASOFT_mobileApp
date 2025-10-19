@@ -18,23 +18,22 @@ const isDefaultPassword = (password) => {
 // دالة لتحديث حالة المستخدم بناءً على الاشتراك
 const updateUserActiveStatus = async (userId) => {
     try {
-        const updateQuery = `
-            UPDATE app_users 
-            SET is_active = CASE 
-                WHEN EXISTS (
-                    SELECT 1 FROM subscriptions 
-                    WHERE user_id = @user_id 
-                    AND is_active = 1 
-                    AND end_date >= CAST(GETDATE() AS DATE)
-                ) THEN 1
-                ELSE 0
-            END
-            WHERE id = @user_id
-        `;
-        
+        const updateQuery = `EXEC dbo.UpdateUserActiveStatus @user_id`;
         await executeQuery(updateQuery, { user_id: userId });
     } catch (error) {
         console.error('❌ Error updating user active status:', error.message);
+    }
+};
+
+// دالة للحصول على حالة الاشتراك
+const getSubscriptionStatus = async (userId) => {
+    try {
+        const statusQuery = `EXEC dbo.GetSubscriptionStatus @user_id`;
+        const result = await executeQuery(statusQuery, { user_id: userId });
+        return result[0] || null;
+    } catch (error) {
+        console.error('❌ Error getting subscription status:', error.message);
+        return null;
     }
 };
 
@@ -117,16 +116,8 @@ router.post("/login", async (req, res) => {
                 u.phone,
                 u.last_login,
                 u.created_at,
-                s.plan_type,
-                s.start_date,
-                s.end_date,
-                s.is_active as subscription_active,
-                CASE 
-                    WHEN s.is_active = 1 AND s.end_date >= CAST(GETDATE() AS DATE) THEN 1
-                    ELSE 0
-                END as is_active
+                u.is_active
             FROM app_users u
-            LEFT JOIN subscriptions s ON u.id = s.user_id AND s.is_active = 1
             WHERE (u.username = @username OR u.email = @username)
         `;
 
@@ -150,6 +141,9 @@ router.post("/login", async (req, res) => {
             });
         }
 
+        // الحصول على حالة الاشتراك الحالية
+        const subscriptionStatus = await getSubscriptionStatus(user.id);
+        
         // التحقق من حالة المستخدم (يعتمد على الاشتراك)
         // السماح للمستخدمين الجدد بتسجيل الدخول لفترة تجريبية (7 أيام)
         const userCreatedDate = new Date(user.created_at || new Date());
@@ -158,11 +152,17 @@ router.post("/login", async (req, res) => {
         trialEndDate.setDate(trialEndDate.getDate() + trialPeriodDays);
         const isInTrialPeriod = new Date() <= trialEndDate;
         
-        if (user.is_active === 0 && !isInTrialPeriod) {
+        // التحقق من حالة الاشتراك
+        const isSubscriptionActive = subscriptionStatus && 
+            subscriptionStatus.subscription_is_active && 
+            subscriptionStatus.calculated_days_remaining > 0;
+        
+        if (!isSubscriptionActive && !isInTrialPeriod) {
             return res.status(403).json({
-                error: "حساب غير نشط",
-                message: "حسابك غير نشط. يرجى تجديد الاشتراك أو إنشاء اشتراك جديد",
-                subscription_required: true
+                error: "اشتراك منتهي الصلاحية",
+                message: "اشتراكك انتهت صلاحيته. يرجى تجديد الاشتراك أو إنشاء اشتراك جديد",
+                subscription_required: true,
+                days_remaining: subscriptionStatus ? subscriptionStatus.calculated_days_remaining : 0
             });
         }
 
@@ -176,7 +176,7 @@ router.post("/login", async (req, res) => {
         await executeQuery(updateLoginQuery, { user_id: user.id });
 
         // حساب حالة الاشتراك
-        let subscriptionStatus = {
+        let subscriptionResponse = {
             is_active: false,
             plan_type: null,
             start_date: null,
@@ -189,7 +189,7 @@ router.post("/login", async (req, res) => {
         // التحقق من الفترة التجريبية
         if (isInTrialPeriod) {
             const trialDaysRemaining = Math.ceil((trialEndDate - new Date()) / (1000 * 60 * 60 * 24));
-            subscriptionStatus = {
+            subscriptionResponse = {
                 is_active: true,
                 plan_type: "trial",
                 start_date: userCreatedDate.toISOString().split('T')[0],
@@ -198,17 +198,13 @@ router.post("/login", async (req, res) => {
                 is_trial: true,
                 trial_days_remaining: Math.max(0, trialDaysRemaining)
             };
-        } else if (user.subscription_active && user.end_date) {
-            const subscriptionEndDate = new Date(user.end_date);
-            const currentDate = new Date();
-            const daysRemaining = Math.ceil((subscriptionEndDate - currentDate) / (1000 * 60 * 60 * 24));
-            
-            subscriptionStatus = {
-                is_active: currentDate <= subscriptionEndDate,
-                plan_type: user.plan_type,
-                start_date: user.start_date,
-                end_date: user.end_date,
-                days_remaining: Math.max(0, daysRemaining),
+        } else if (subscriptionStatus) {
+            subscriptionResponse = {
+                is_active: subscriptionStatus.calculated_active === 1,
+                plan_type: subscriptionStatus.plan_type,
+                start_date: subscriptionStatus.start_date,
+                end_date: subscriptionStatus.end_date,
+                days_remaining: subscriptionStatus.calculated_days_remaining,
                 is_trial: false,
                 trial_days_remaining: 0
             };
@@ -219,7 +215,7 @@ router.post("/login", async (req, res) => {
             user_id: user.id,
             username: user.username,
             email: user.email,
-            subscription: subscriptionStatus
+            subscription: subscriptionResponse
         };
 
         const token = generateToken(tokenData);
@@ -232,7 +228,7 @@ router.post("/login", async (req, res) => {
             full_name: user.full_name,
             phone: user.phone,
             last_login: user.last_login,
-            subscription: subscriptionStatus
+            subscription: subscriptionResponse
         };
 
         res.json({
@@ -530,34 +526,23 @@ router.post("/create-subscription", async (req, res) => {
             }
         }
 
-        // حساب تاريخ الانتهاء
-        const currentDate = new Date();
-        const endDate = new Date();
-        endDate.setMonth(endDate.getMonth() + months);
-
-        // إنشاء الاشتراك الجديد
-        const createSubscriptionQuery = `
-            INSERT INTO subscriptions (user_id, plan_type, start_date, end_date, is_active)
-            VALUES (@user_id, @plan_type, @start_date, @end_date, 1)
-        `;
+        // إنشاء الاشتراك الجديد باستخدام procedure
+        const createSubscriptionQuery = `EXEC dbo.CreateSubscription @user_id, @plan_type, @months`;
         
-        await executeQuery(createSubscriptionQuery, {
+        const subscriptionResult = await executeQuery(createSubscriptionQuery, {
             user_id: user.id,
             plan_type,
-            start_date: currentDate.toISOString().split('T')[0],
-            end_date: endDate.toISOString().split('T')[0]
+            months
         });
 
-        // تحديث حالة المستخدم
-        await updateUserActiveStatus(user.id);
-
         // إنشاء التوكن
+        const subscription = subscriptionResult[0];
         const subscriptionStatus = {
             is_active: true,
-            plan_type,
-            start_date: currentDate.toISOString().split('T')[0],
-            end_date: endDate.toISOString().split('T')[0],
-            days_remaining: Math.ceil((endDate - currentDate) / (1000 * 60 * 60 * 24)),
+            plan_type: subscription.plan_type,
+            start_date: subscription.start_date,
+            end_date: subscription.end_date,
+            days_remaining: subscription.days_remaining,
             is_trial: false,
             trial_days_remaining: 0
         };
@@ -618,47 +603,23 @@ router.post("/renew-subscription", authenticateToken, async (req, res) => {
             });
         }
 
-        // حساب تاريخ الانتهاء الجديد
-        const currentDate = new Date();
-        const endDate = new Date();
-        endDate.setMonth(endDate.getMonth() + months);
-
-        // تحديث أو إدراج الاشتراك
-        const upsertSubscriptionQuery = `
-            IF EXISTS (SELECT 1 FROM subscriptions WHERE user_id = @user_id AND is_active = 1)
-            BEGIN
-                UPDATE subscriptions 
-                SET plan_type = @plan_type, 
-                    start_date = @start_date, 
-                    end_date = @end_date,
-                    updated_at = GETDATE()
-                WHERE user_id = @user_id AND is_active = 1
-            END
-            ELSE
-            BEGIN
-                INSERT INTO subscriptions (user_id, plan_type, start_date, end_date, is_active)
-                VALUES (@user_id, @plan_type, @start_date, @end_date, 1)
-            END
-        `;
+        // تجديد الاشتراك باستخدام procedure
+        const renewSubscriptionQuery = `EXEC dbo.RenewSubscription @user_id, @months`;
         
-        await executeQuery(upsertSubscriptionQuery, {
+        const subscriptionResult = await executeQuery(renewSubscriptionQuery, {
             user_id: req.user.id,
-            plan_type,
-            start_date: currentDate.toISOString().split('T')[0],
-            end_date: endDate.toISOString().split('T')[0]
+            months
         });
 
-        // تحديث حالة المستخدم بناءً على الاشتراك الجديد
-        await updateUserActiveStatus(req.user.id);
-
+        const subscription = subscriptionResult[0];
         res.json({
             message: "تم تجديد الاشتراك بنجاح",
             subscription: {
-                plan_type,
-                start_date: currentDate.toISOString().split('T')[0],
-                end_date: endDate.toISOString().split('T')[0],
+                plan_type: subscription.plan_type,
+                start_date: subscription.start_date,
+                end_date: subscription.end_date,
                 is_active: true,
-                days_remaining: Math.ceil((endDate - currentDate) / (1000 * 60 * 60 * 24))
+                days_remaining: subscription.days_remaining
             }
         });
 
@@ -952,6 +913,38 @@ router.post("/forgot-password", async (req, res) => {
             error: "خطأ في الخادم",
             message: "فشل في تحديث كلمة المرور",
             details: err.message
+        });
+    }
+});
+
+// ✅ GET حالة الاشتراك الحالية
+router.get("/subscription-status", authenticateToken, async (req, res) => {
+    try {
+        const subscriptionStatus = await getSubscriptionStatus(req.user.id);
+        
+        if (!subscriptionStatus) {
+            return res.status(404).json({
+                error: "لا يوجد اشتراك",
+                message: "لا يوجد اشتراك نشط للمستخدم"
+            });
+        }
+        
+        res.json({
+            subscription: {
+                id: subscriptionStatus.subscription_id,
+                plan_type: subscriptionStatus.plan_type,
+                start_date: subscriptionStatus.start_date,
+                end_date: subscriptionStatus.end_date,
+                is_active: subscriptionStatus.calculated_active === 1,
+                days_remaining: subscriptionStatus.calculated_days_remaining,
+                user_is_active: subscriptionStatus.user_is_active
+            }
+        });
+    } catch (err) {
+        console.error("❌ Get subscription status error:", err.message);
+        res.status(500).json({
+            error: "خطأ في الخادم",
+            message: "فشل في جلب حالة الاشتراك"
         });
     }
 });
