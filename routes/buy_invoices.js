@@ -135,7 +135,7 @@ router.get("/", authenticateToken, async (req, res) => {
 
 
 // صافي المشتريات - مُعدَّل وجاهز للاستخدام
-router.get("/net-purchases", async (req, res) => {
+router.get("/net-purchases", authenticateToken, async (req, res) => {
     try {
      
         const { date_from, date_to } = req.query;

@@ -131,7 +131,7 @@ router.get("/", authenticateToken, async (req, res) => {
 });
 
 // POST new invoice - مُعدَّل وجاهز للاستخدام
-router.post("/", async (req, res) => {
+router.post("/", authenticateToken, async (req, res) => {
   try {
     const {
       invoice_number,

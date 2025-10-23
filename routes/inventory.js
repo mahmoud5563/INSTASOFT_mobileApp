@@ -63,7 +63,7 @@ router.get("/", authenticateToken, async (req, res) => {
 });
 
 // ✅ GET أصناف منخفضة المخزون
-router.get("/low-stock", async (req, res) => {
+router.get("/low-stock", authenticateToken, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
@@ -121,7 +121,7 @@ router.get("/low-stock", async (req, res) => {
 });
 
 // ✅ GET أصناف زائدة المخزون
-router.get("/over-stock", async (req, res) => {
+router.get("/over-stock", authenticateToken, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
@@ -179,7 +179,7 @@ router.get("/over-stock", async (req, res) => {
 });
 
 // ✅ GET تقرير إجمالي الجرد
-router.get("/summary/total", async (req, res) => {
+router.get("/summary/total", authenticateToken, async (req, res) => {
   try {
     const query = `
       SELECT 
@@ -204,7 +204,7 @@ router.get("/summary/total", async (req, res) => {
 });
 
 // ✅ GET أصناف زائدة المخزون
-router.get("/over-stock", async (req, res) => {
+router.get("/over-stock", authenticateToken, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
@@ -262,7 +262,7 @@ router.get("/over-stock", async (req, res) => {
 });
 
 // ✅ GET تقرير إجمالي الجرد
-router.get("/summary/total", async (req, res) => {
+router.get("/summary/total", authenticateToken, async (req, res) => {
   try {
     const query = `
       SELECT 
@@ -287,7 +287,7 @@ router.get("/summary/total", async (req, res) => {
 });
 
 // ✅ GET حركة صنف محدد
-router.get("/:item_code/movement", async (req, res) => {
+router.get("/:item_code/movement", authenticateToken, async (req, res) => {
   try {
     const { item_code } = req.params;
     const page = parseInt(req.query.page) || 1;
@@ -352,7 +352,7 @@ router.get("/:item_code/movement", async (req, res) => {
 });
 
 // ✅ GET جميع تحويلات المخازن مع الأصناف
-router.get("/transfers", async (req, res) => {
+router.get("/transfers", authenticateToken, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
@@ -435,7 +435,7 @@ router.get("/transfers", async (req, res) => {
 });
 
 // ✅ GET تحويل محدد بالرقم مع الأصناف
-router.get("/transfers/:fatora_number", async (req, res) => {
+router.get("/transfers/:fatora_number", authenticateToken, async (req, res) => {
   try {
     const { fatora_number } = req.params;
 
@@ -493,7 +493,7 @@ router.get("/transfers/:fatora_number", async (req, res) => {
 });
 
 // ✅ GET أصناف تحويل محدد
-router.get("/transfers/:fatora_number/items", async (req, res) => {
+router.get("/transfers/:fatora_number/items", authenticateToken, async (req, res) => {
   try {
     const { fatora_number } = req.params;
     const page = parseInt(req.query.page) || 1;
@@ -550,7 +550,7 @@ router.get("/transfers/:fatora_number/items", async (req, res) => {
 });
 
 // ✅ GET صنف محدد بالكود
-router.get("/:item_code", async (req, res) => {
+router.get("/:item_code", authenticateToken, async (req, res) => {
   try {
     const { item_code } = req.params;
 

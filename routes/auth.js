@@ -105,7 +105,7 @@ router.post("/login", async (req, res) => {
             });
         }
 
-        // البحث عن المستخدم
+        // البحث عن المستخدم مع حالة الاشتراك النشط فقط
         const userQuery = `
             SELECT 
                 u.id,
@@ -116,8 +116,15 @@ router.post("/login", async (req, res) => {
                 u.phone,
                 u.last_login,
                 u.created_at,
-                u.is_active
+                u.is_active,
+                s.id as subscription_id,
+                s.plan_type,
+                s.start_date,
+                s.end_date,
+                s.is_active as subscription_is_active,
+                s.days_remaining
             FROM app_users u
+            LEFT JOIN subscriptions s ON u.id = s.user_id AND s.is_active = 1
             WHERE (u.username = @username OR u.email = @username)
         `;
 
@@ -141,30 +148,34 @@ router.post("/login", async (req, res) => {
             });
         }
 
-        // الحصول على حالة الاشتراك الحالية
-        const subscriptionStatus = await getSubscriptionStatus(user.id);
-        
-        // التحقق من حالة المستخدم (يعتمد على الاشتراك)
-        // السماح للمستخدمين الجدد بتسجيل الدخول لفترة تجريبية (7 أيام)
-        const userCreatedDate = new Date(user.created_at || new Date());
-        const trialPeriodDays = 7;
-        const trialEndDate = new Date(userCreatedDate);
-        trialEndDate.setDate(trialEndDate.getDate() + trialPeriodDays);
-        const isInTrialPeriod = new Date() <= trialEndDate;
-        
-        // التحقق من حالة الاشتراك
-        const isSubscriptionActive = subscriptionStatus && 
-            subscriptionStatus.subscription_is_active && 
-            subscriptionStatus.calculated_days_remaining > 0;
-        
-        if (!isSubscriptionActive && !isInTrialPeriod) {
+        // التحقق من حالة الاشتراك - فقط is_active = true
+        if (!user.subscription_is_active || user.subscription_is_active !== true) {
+            // إضافة رسالة تشخيصية
+            console.log(`❌ User ${user.username} login failed - subscription status:`, {
+                subscription_id: user.subscription_id,
+                subscription_is_active: user.subscription_is_active,
+                plan_type: user.plan_type
+            });
+            
             return res.status(403).json({
-                error: "اشتراك منتهي الصلاحية",
-                message: "اشتراكك انتهت صلاحيته. يرجى تجديد الاشتراك أو إنشاء اشتراك جديد",
+                error: "اشتراك غير نشط",
+                message: "يجب عليك الاشتراك أولاً للوصول إلى النظام",
                 subscription_required: true,
-                days_remaining: subscriptionStatus ? subscriptionStatus.calculated_days_remaining : 0
+                debug_info: {
+                    has_subscription: !!user.subscription_id,
+                    subscription_is_active: user.subscription_is_active,
+                    plan_type: user.plan_type
+                }
             });
         }
+
+        // رسالة نجاح للتشخيص
+        console.log(`✅ User ${user.username} login successful - subscription:`, {
+            subscription_id: user.subscription_id,
+            subscription_is_active: user.subscription_is_active,
+            plan_type: user.plan_type,
+            days_remaining: user.days_remaining
+        });
 
         // تحديث آخر تسجيل دخول
         const updateLoginQuery = `
@@ -175,40 +186,16 @@ router.post("/login", async (req, res) => {
         
         await executeQuery(updateLoginQuery, { user_id: user.id });
 
-        // حساب حالة الاشتراك
-        let subscriptionResponse = {
-            is_active: false,
-            plan_type: null,
-            start_date: null,
-            end_date: null,
-            days_remaining: 0,
-            is_trial: false,
-            trial_days_remaining: 0
+        // إعداد بيانات الاشتراك
+        const subscriptionResponse = {
+            is_active: true,
+            plan_type: user.plan_type,
+            start_date: user.start_date,
+            end_date: user.end_date,
+            days_remaining: user.days_remaining || 0,
+            is_trial: user.plan_type === 'trial',
+            trial_days_remaining: user.plan_type === 'trial' ? (user.days_remaining || 0) : 0
         };
-
-        // التحقق من الفترة التجريبية
-        if (isInTrialPeriod) {
-            const trialDaysRemaining = Math.ceil((trialEndDate - new Date()) / (1000 * 60 * 60 * 24));
-            subscriptionResponse = {
-                is_active: true,
-                plan_type: "trial",
-                start_date: userCreatedDate.toISOString().split('T')[0],
-                end_date: trialEndDate.toISOString().split('T')[0],
-                days_remaining: Math.max(0, trialDaysRemaining),
-                is_trial: true,
-                trial_days_remaining: Math.max(0, trialDaysRemaining)
-            };
-        } else if (subscriptionStatus) {
-            subscriptionResponse = {
-                is_active: subscriptionStatus.calculated_active === 1,
-                plan_type: subscriptionStatus.plan_type,
-                start_date: subscriptionStatus.start_date,
-                end_date: subscriptionStatus.end_date,
-                days_remaining: subscriptionStatus.calculated_days_remaining,
-                is_trial: false,
-                trial_days_remaining: 0
-            };
-        }
 
         // إنشاء التوكن
         const tokenData = {
@@ -303,10 +290,47 @@ router.post("/register", async (req, res) => {
         `;
         
         const newUser = await executeQuery(newUserQuery, { username });
+        const userId = newUser[0].id;
+
+        // إنشاء اشتراك تلقائي لمدة 7 أيام للمستخدم الجديد
+        const createTrialSubscriptionQuery = `
+            INSERT INTO subscriptions (user_id, plan_type, start_date, end_date, is_active, created_at, updated_at)
+            VALUES (@user_id, 'trial', @start_date, @end_date, 1, GETDATE(), GETDATE())
+        `;
+        
+        const startDate = new Date();
+        const endDate = new Date();
+        endDate.setDate(endDate.getDate() + 7); // 7 أيام من اليوم
+        
+        await executeQuery(createTrialSubscriptionQuery, {
+            user_id: userId,
+            start_date: startDate.toISOString().split('T')[0],
+            end_date: endDate.toISOString().split('T')[0]
+        });
+
+        // جلب بيانات الاشتراك الجديد
+        const subscriptionQuery = `
+            SELECT plan_type, start_date, end_date, is_active, days_remaining
+            FROM subscriptions 
+            WHERE user_id = @user_id AND is_active = 1
+        `;
+        
+        const subscription = await executeQuery(subscriptionQuery, { user_id: userId });
 
         res.status(201).json({
-            message: "تم إنشاء الحساب بنجاح",
-            user: newUser[0]
+            message: "تم إنشاء الحساب بنجاح مع اشتراك تجريبي لمدة 7 أيام",
+            user: {
+                ...newUser[0],
+                subscription: {
+                    is_active: true,
+                    plan_type: subscription[0].plan_type,
+                    start_date: subscription[0].start_date,
+                    end_date: subscription[0].end_date,
+                    days_remaining: subscription[0].days_remaining,
+                    is_trial: true,
+                    trial_days_remaining: subscription[0].days_remaining
+                }
+            }
         });
 
     } catch (err) {

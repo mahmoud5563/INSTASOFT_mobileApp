@@ -36,7 +36,6 @@ const executePaginatedQuery = async (baseQuery, countQuery, page, limit) => {
     };
 };
 
-// ... (دوال validatePaginationParams و validateCode كما هي) ...
 const validatePaginationParams = (page, limit) => {
     const errors = [];
     if (isNaN(page) || page < 1) {
@@ -63,9 +62,9 @@ const validateCode = (code) => {
 
 
 // ✅ GET كل الحسابات (عملاء + موردين) - مُعدَّل
-router.get("/", async (req, res) => {
+router.get("/",  authenticateToken, async (req, res) => {
     try {
-        // تم إزالة الحماية 
+   
 
         const page = parseInt(req.query.page) || 1;
         const limit = Math.min(parseInt(req.query.limit) || 5, 100);
@@ -95,7 +94,7 @@ router.get("/", async (req, res) => {
         console.error("❌ Error fetching accounts:", err.message);
         console.error("❌ Full error:", err);
         
-        // إرجاع رسالة خطأ واضحة
+
         res.status(500).json({ 
             error: "خطأ في الخادم", 
             message: "فشل في جلب بيانات الحسابات",
@@ -105,7 +104,7 @@ router.get("/", async (req, res) => {
 });
 
 // ✅ GET كل العملاء - مُعدَّل
-router.get("/customers", async (req, res) => {
+router.get("/customers", authenticateToken, async (req, res) => {
     try {
     
 
@@ -143,7 +142,7 @@ router.get("/customers", async (req, res) => {
 
 
 // ✅ GET كل الموردين - مُعدَّل
-router.get("/suppliers", async (req, res) => {
+router.get("/suppliers", authenticateToken, async (req, res) => {
     try {
         // تم إزالة الحماية 
 
@@ -184,7 +183,7 @@ router.get("/suppliers", async (req, res) => {
 });
 
 // (ملف عميل ) ✅ GET حركة حساب برقم الكود - مُعدَّل
-router.get("/:code/transactions", async (req, res) => {
+router.get("/:code/transactions", authenticateToken, async (req, res) => {
     try {
         // تم إزالة الحماية 
 
@@ -212,7 +211,7 @@ router.get("/:code/transactions", async (req, res) => {
 });
 
 // ✅ GET تقرير أرصدة الحسابات - مُعدَّل
-router.get("/balances/all", async (req, res) => {
+router.get("/balances/all", authenticateToken, async (req, res) => {
     try {
         // تم إزالة الحماية 
 
@@ -242,7 +241,7 @@ router.get("/balances/all", async (req, res) => {
 });
 
 // ✅ GET تقرير أرصدة العملاء فقط - مُعدَّل
-router.get("/balances/customers", async (req, res) => {
+router.get("/balances/customers", authenticateToken, async (req, res) => {
     try {
         // تم إزالة الحماية 
 
@@ -307,7 +306,7 @@ router.get("/balances/customers", async (req, res) => {
 
 
 // ✅ GET تقرير أرصدة الموردين فقط - مُعدَّل
-router.get("/balances/suppliers", async (req, res) => {
+router.get("/balances/suppliers", authenticateToken, async (req, res) => {
     try {
         // تم إزالة الحماية 
 
@@ -372,7 +371,7 @@ router.get("/balances/suppliers", async (req, res) => {
 
 
 // GET ارصده تعدت حد الاتمان - مُعدَّل
-router.get("/over-credit", async (req, res) => {
+router.get("/over-credit", authenticateToken, async (req, res) => {
     try {
         // تم إزالة الحماية 
 
@@ -438,7 +437,7 @@ router.get("/over-credit", async (req, res) => {
 
 
 // ارباح العملاء - مُعدَّل
-router.get("/profits", async (req, res) => {
+router.get("/profits", authenticateToken, async (req, res) => {
     try {
         // تم إزالة الحماية 
 
@@ -479,7 +478,7 @@ router.get("/profits", async (req, res) => {
 
 
 // ارباح عميل معين - مُعدَّل
-router.get("/profits/:code", async (req, res) => {
+router.get("/profits/:code", authenticateToken, async (req, res) => {
     try {
         // تم إزالة الحماية 
         

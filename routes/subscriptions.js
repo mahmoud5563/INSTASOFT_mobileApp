@@ -55,7 +55,7 @@ router.post("/", authenticateToken, async (req, res) => {
 });
 
 // 📌 Update subscription
-router.put("/:id", async (req, res) => {
+router.put("/:id", authenticateToken, async (req, res) => {
   try {
     const { plan_type, start_date, end_date, is_active } = req.body;
 
@@ -74,7 +74,7 @@ router.put("/:id", async (req, res) => {
 });
 
 // 📌 Delete subscription
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", authenticateToken, async (req, res) => {
   try {
     await executeQuery(`DELETE FROM subscriptions WHERE id=@id`, { id: req.params.id });
     res.json({ msg: "تم حذف الاشتراك" });

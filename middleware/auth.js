@@ -38,7 +38,7 @@ const authenticateToken = async (req, res, next) => {
         // التحقق من صحة التوكن
         const decoded = verifyToken(token);
         
-        // التحقق من وجود المستخدم في قاعدة البيانات
+        // التحقق من وجود المستخدم في قاعدة البيانات مع حالة الاشتراك النشط فقط
         const userQuery = `
             SELECT 
                 u.id,
@@ -51,11 +51,8 @@ const authenticateToken = async (req, res, next) => {
                 s.plan_type,
                 s.start_date,
                 s.end_date,
-                s.is_active as subscription_active,
-                CASE 
-                    WHEN s.is_active = 1 AND s.end_date >= CAST(GETDATE() AS DATE) THEN 1
-                    ELSE 0
-                END as is_active
+                s.is_active as subscription_is_active,
+                s.days_remaining
             FROM app_users u
             LEFT JOIN subscriptions s ON u.id = s.user_id AND s.is_active = 1
             WHERE u.id = @user_id
@@ -72,70 +69,25 @@ const authenticateToken = async (req, res, next) => {
 
         const user = userResult[0];
 
-        // التحقق من حالة المستخدم (يعتمد على الاشتراك)
-        // السماح للمستخدمين الجدد بتسجيل الدخول لفترة تجريبية (7 أيام)
-        const userCreatedDate = new Date(user.created_at || new Date());
-        const trialPeriodDays = 7;
-        const trialEndDate = new Date(userCreatedDate);
-        trialEndDate.setDate(trialEndDate.getDate() + trialPeriodDays);
-        const isInTrialPeriod = new Date() <= trialEndDate;
-        
-        if (user.is_active === 0 && !isInTrialPeriod) {
+        // التحقق من حالة الاشتراك - فقط is_active = true
+        if (!user.subscription_is_active || user.subscription_is_active !== true) {
             return res.status(403).json({
-                error: 'حساب غير نشط',
-                message: 'حسابك غير نشط. يرجى تجديد الاشتراك أو إنشاء اشتراك جديد',
+                error: 'اشتراك غير نشط',
+                message: 'يجب عليك الاشتراك أولاً للوصول إلى النظام',
                 subscription_required: true
             });
         }
 
-        // التحقق من صحة الاشتراك
-        let subscriptionStatus = {
-            is_active: false,
-            plan_type: null,
-            start_date: null,
-            end_date: null,
-            days_remaining: 0,
-            is_trial: false,
-            trial_days_remaining: 0
+        // إعداد بيانات الاشتراك
+        const subscriptionStatus = {
+            is_active: true,
+            plan_type: user.plan_type,
+            start_date: user.start_date,
+            end_date: user.end_date,
+            days_remaining: user.days_remaining || 0,
+            is_trial: user.plan_type === 'trial',
+            trial_days_remaining: user.plan_type === 'trial' ? (user.days_remaining || 0) : 0
         };
-
-        // التحقق من الفترة التجريبية
-        if (isInTrialPeriod) {
-            const trialDaysRemaining = Math.ceil((trialEndDate - new Date()) / (1000 * 60 * 60 * 24));
-            subscriptionStatus = {
-                is_active: true,
-                plan_type: "trial",
-                start_date: userCreatedDate.toISOString().split('T')[0],
-                end_date: trialEndDate.toISOString().split('T')[0],
-                days_remaining: Math.max(0, trialDaysRemaining),
-                is_trial: true,
-                trial_days_remaining: Math.max(0, trialDaysRemaining)
-            };
-        } else if (user.subscription_active && user.end_date) {
-            const subscriptionEndDate = new Date(user.end_date);
-            const currentDate = new Date();
-            const daysRemaining = Math.ceil((subscriptionEndDate - currentDate) / (1000 * 60 * 60 * 24));
-            
-            subscriptionStatus = {
-                is_active: currentDate <= subscriptionEndDate,
-                plan_type: user.plan_type,
-                start_date: user.start_date,
-                end_date: user.end_date,
-                days_remaining: Math.max(0, daysRemaining),
-                is_trial: false,
-                trial_days_remaining: 0
-            };
-            
-            if (currentDate > subscriptionEndDate) {
-                return res.status(403).json({
-                    error: 'انتهت صلاحية الاشتراك',
-                    message: 'يرجى تجديد الاشتراك للوصول للخدمة',
-                    subscription_expired: true,
-                    end_date: user.end_date,
-                    subscription: subscriptionStatus
-                });
-            }
-        }
 
         // إضافة بيانات المستخدم للطلب
         req.user = {
