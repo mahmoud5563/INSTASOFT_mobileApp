@@ -352,7 +352,7 @@ router.get("/:item_code/movement", authenticateToken, async (req, res) => {
 });
 
 // ✅ GET جميع تحويلات المخازن مع الأصناف
-router.get("/transfers", authenticateToken, async (req, res) => {
+router.get("/transfers" , authenticateToken , async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;

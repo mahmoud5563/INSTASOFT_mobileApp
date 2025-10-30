@@ -213,7 +213,6 @@ router.get("/:code/transactions", authenticateToken, async (req, res) => {
 // ✅ GET تقرير أرصدة الحسابات - مُعدَّل
 router.get("/balances/all", authenticateToken, async (req, res) => {
     try {
-        // تم إزالة الحماية 
 
         const result = await pool.request()
             .query(`
@@ -243,7 +242,6 @@ router.get("/balances/all", authenticateToken, async (req, res) => {
 // ✅ GET تقرير أرصدة العملاء فقط - مُعدَّل
 router.get("/balances/customers", authenticateToken, async (req, res) => {
     try {
-        // تم إزالة الحماية 
 
         // تحديد متغيرات الـ pagination
         const page = parseInt(req.query.page) || 1; 
@@ -308,7 +306,7 @@ router.get("/balances/customers", authenticateToken, async (req, res) => {
 // ✅ GET تقرير أرصدة الموردين فقط - مُعدَّل
 router.get("/balances/suppliers", authenticateToken, async (req, res) => {
     try {
-        // تم إزالة الحماية 
+       
 
         // تحديد متغيرات الـ pagination
         const page = parseInt(req.query.page) || 1; 
@@ -373,7 +371,7 @@ router.get("/balances/suppliers", authenticateToken, async (req, res) => {
 // GET ارصده تعدت حد الاتمان - مُعدَّل
 router.get("/over-credit", authenticateToken, async (req, res) => {
     try {
-        // تم إزالة الحماية 
+       
 
         // تحديد متغيرات الـ pagination
         const page = parseInt(req.query.page) || 1; 
@@ -439,7 +437,6 @@ router.get("/over-credit", authenticateToken, async (req, res) => {
 // ارباح العملاء - مُعدَّل
 router.get("/profits", authenticateToken, async (req, res) => {
     try {
-        // تم إزالة الحماية 
 
         const page = parseInt(req.query.page) || 1; 
         const limit = Math.min(parseInt(req.query.limit) || 5, 100);
@@ -477,10 +474,9 @@ router.get("/profits", authenticateToken, async (req, res) => {
 });
 
 
-// ارباح عميل معين - مُعدَّل
+// ارباح عميل معين -
 router.get("/profits/:code", authenticateToken, async (req, res) => {
     try {
-        // تم إزالة الحماية 
         
         const { code } = req.params;
         
