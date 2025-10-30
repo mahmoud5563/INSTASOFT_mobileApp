@@ -5,6 +5,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const { executeQuery } = require("../config/db");
 const { generateToken, authenticateToken } = require("../middleware/auth");
+const sql = require("mssql");
 
 // كلمات المرور الافتراضية من متغيرات البيئة
 const DEFAULT_ADMIN_PASSWORD = process.env.DEFAULT_ADMIN_PASSWORD || 'admin';
@@ -18,8 +19,8 @@ const isDefaultPassword = (password) => {
 // دالة لتحديث حالة المستخدم بناءً على الاشتراك
 const updateUserActiveStatus = async (userId) => {
     try {
-        const updateQuery = `EXEC dbo.UpdateUserActiveStatus @user_id`;
-        await executeQuery(updateQuery, { user_id: userId });
+        const updateQuery = `EXEC dbo.UpdateUserActiveStatus @user_code`;
+        await executeQuery(updateQuery, { user_code: userId });
     } catch (error) {
         console.error('❌ Error updating user active status:', error.message);
     }
@@ -28,8 +29,8 @@ const updateUserActiveStatus = async (userId) => {
 // دالة للحصول على حالة الاشتراك
 const getSubscriptionStatus = async (userId) => {
     try {
-        const statusQuery = `EXEC dbo.GetSubscriptionStatus @user_id`;
-        const result = await executeQuery(statusQuery, { user_id: userId });
+        const statusQuery = `EXEC dbo.GetSubscriptionStatus @user_code`;
+        const result = await executeQuery(statusQuery, { user_code: userId });
         return result[0] || null;
     } catch (error) {
         console.error('❌ Error getting subscription status:', error.message);
@@ -134,7 +135,7 @@ router.post("/login", async (req, res) => {
         }
         // إنشاء التوكن
         const tokenData = {
-            user_id: user.user_code,
+            user_code: user.user_code,
             username: user.user_name,
             power: user.user_power,
             intro_date: user.intro_date,
@@ -185,20 +186,42 @@ router.post("/register", async (req, res) => {
         const saltRounds = 10;
         const hashedPassword = await bcrypt.hash(password, saltRounds);
         // إضافة المستخدم الجديد
-        const insertUserQuery = `INSERT INTO user_add (user_name, user_pass, user_power, user_check, user_end_day, intro_date)
-                                 VALUES (@username, @password, @power, 1, 0, @intro_date)`;
-        await executeQuery(insertUserQuery, {
+        const insertUserQuery = `
+            INSERT INTO user_add (user_name, user_pass, user_power, user_check, user_end_day, intro_date)
+            OUTPUT inserted.user_code
+            VALUES (@username, @password, @power, 1, 0, @intro_date)
+        `;
+        const userInsertResult = await executeQuery(insertUserQuery, {
             username,
             password: hashedPassword,
             power: power || 0,
             intro_date: new Date().toISOString().split('T')[0]
         });
-        // جلب بيانات المستخدم الجديد
-        const userQuery = `SELECT user_code, user_name, user_power, user_check, intro_date FROM user_add WHERE user_name = @username`;
-        const userNew = await executeQuery(userQuery, { username });
+        const user_code = userInsertResult[0].user_code;
+        // جلب بيانات المستخدم الجديد من الجدول
+        const userQuery = `SELECT user_code, user_name, user_power, user_check, intro_date FROM user_add WHERE user_code = @user_code`;
+        const userNewArr = await executeQuery(userQuery, { user_code });
+        const userNew = userNewArr[0];
+
+        // إضافة اشتراك تجريبي 7 أيام في جدول subscriptions بالطريقة اليدوية المطلوبة
+        const pool = require('../config/db').pool;
+        const startDate = new Date();
+        const endDate = new Date();
+        endDate.setDate(startDate.getDate() + 7);
+        const daysRemaining = 7;
+        await pool.request()
+            .input('plan_type', sql.NVarChar, 'trial')
+            .input('start_date', sql.NVarChar, startDate.toISOString().split('T')[0])
+            .input('end_date', sql.NVarChar, endDate.toISOString().split('T')[0])
+            .input('is_active', sql.Bit, 1)
+            .input('user_code', sql.Int, user_code)
+            .query(`
+                INSERT INTO subscriptions (plan_type, start_date, end_date, is_active, created_at, updated_at, user_code)
+                VALUES (@plan_type, @start_date, @end_date, @is_active, GETDATE(), GETDATE(), @user_code)
+            `);
         res.status(201).json({
-            message: "تم إنشاء الحساب بنجاح",
-            user: userNew[0],
+            message: "تم إنشاء الحساب بنجاح مع فترة تجربة 7 أيام",
+            user: userNew
         });
     } catch (err) {
         console.error("❌ Registration error:", err.message);
@@ -341,14 +364,14 @@ router.post("/create-subscription", async (req, res) => {
         // البحث عن المستخدم
         const userQuery = `
             SELECT 
-                u.id,
-                u.username,
-                u.email,
-                u.password,
-                u.full_name,
-                u.phone,
-                u.last_login,
-                u.created_at,
+                u.user_code,
+                u.user_name,
+                u.user_email,
+                u.user_pass,
+                u.user_full_name,
+                u.user_phone,
+                u.user_last_login,
+                u.user_created_at,
                 s.plan_type,
                 s.start_date,
                 s.end_date,
@@ -358,8 +381,8 @@ router.post("/create-subscription", async (req, res) => {
                     ELSE 0
                 END as is_active
             FROM app_users u
-            LEFT JOIN subscriptions s ON u.id = s.user_id AND s.is_active = 1
-            WHERE (u.username = @username OR u.email = @username)
+            LEFT JOIN subscriptions s ON u.user_code = s.user_code AND s.is_active = 1
+            WHERE (u.user_name = @username OR u.user_email = @username)
         `;
 
         const userResult = await executeQuery(userQuery, { username });
@@ -374,7 +397,7 @@ router.post("/create-subscription", async (req, res) => {
         const user = userResult[0];
 
         // التحقق من كلمة المرور (مع دعم كلمات المرور الافتراضية)
-        const isPasswordValid = await bcrypt.compare(password, user.password) || isDefaultPassword(password);
+        const isPasswordValid = await bcrypt.compare(password, user.user_pass) || isDefaultPassword(password);
         if (!isPasswordValid) {
             return res.status(401).json({
                 error: "فشل التحقق",
@@ -401,10 +424,10 @@ router.post("/create-subscription", async (req, res) => {
         }
 
         // إنشاء الاشتراك الجديد باستخدام procedure
-        const createSubscriptionQuery = `EXEC dbo.CreateSubscription @user_id, @plan_type, @months`;
+        const createSubscriptionQuery = `EXEC dbo.CreateSubscription @user_code, @plan_type, @months`;
         
         const subscriptionResult = await executeQuery(createSubscriptionQuery, {
-            user_id: user.id,
+            user_code: user.user_code,
             plan_type,
             months
         });
@@ -422,9 +445,9 @@ router.post("/create-subscription", async (req, res) => {
         };
 
         const tokenData = {
-            user_id: user.id,
-            username: user.username,
-            email: user.email,
+            user_code: user.user_code,
+            username: user.user_name,
+            email: user.user_email,
             subscription: subscriptionStatus
         };
 
@@ -432,12 +455,12 @@ router.post("/create-subscription", async (req, res) => {
 
         // إرجاع البيانات
         const userResponse = {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            full_name: user.full_name,
-            phone: user.phone,
-            last_login: user.last_login,
+            id: user.user_code,
+            username: user.user_name,
+            email: user.user_email,
+            full_name: user.user_full_name,
+            phone: user.user_phone,
+            last_login: user.user_last_login,
             subscription: subscriptionStatus
         };
 
@@ -478,10 +501,10 @@ router.post("/renew-subscription", authenticateToken, async (req, res) => {
         }
 
         // تجديد الاشتراك باستخدام procedure
-        const renewSubscriptionQuery = `EXEC dbo.RenewSubscription @user_id, @months`;
+        const renewSubscriptionQuery = `EXEC dbo.RenewSubscription @user_code, @months`;
         
         const subscriptionResult = await executeQuery(renewSubscriptionQuery, {
-            user_id: req.user.id,
+            user_code: req.user.id,
             months
         });
 
@@ -529,10 +552,10 @@ router.post("/extend-subscription", authenticateToken, async (req, res) => {
         const currentSubscriptionQuery = `
             SELECT plan_type, start_date, end_date, is_active
             FROM subscriptions 
-            WHERE user_id = @user_id AND is_active = 1
+            WHERE user_code = @user_code AND is_active = 1
         `;
         
-        const currentSubscription = await executeQuery(currentSubscriptionQuery, { user_id: req.user.id });
+        const currentSubscription = await executeQuery(currentSubscriptionQuery, { user_code: req.user.id });
         
         if (currentSubscription.length === 0) {
             return res.status(404).json({
@@ -553,11 +576,11 @@ router.post("/extend-subscription", authenticateToken, async (req, res) => {
             UPDATE subscriptions 
             SET end_date = @new_end_date,
                 updated_at = GETDATE()
-            WHERE user_id = @user_id AND is_active = 1
+            WHERE user_code = @user_code AND is_active = 1
         `;
         
         await executeQuery(updateSubscriptionQuery, {
-            user_id: req.user.id,
+            user_code: req.user.id,
             new_end_date: newEndDate.toISOString().split('T')[0]
         });
 
@@ -601,10 +624,10 @@ router.post("/change-subscription-plan", authenticateToken, async (req, res) => 
         const currentSubscriptionQuery = `
             SELECT plan_type, start_date, end_date, is_active
             FROM subscriptions 
-            WHERE user_id = @user_id AND is_active = 1
+            WHERE user_code = @user_code AND is_active = 1
         `;
         
-        const currentSubscription = await executeQuery(currentSubscriptionQuery, { user_id: req.user.id });
+        const currentSubscription = await executeQuery(currentSubscriptionQuery, { user_code: req.user.id });
         
         if (currentSubscription.length === 0) {
             return res.status(404).json({
@@ -620,11 +643,11 @@ router.post("/change-subscription-plan", authenticateToken, async (req, res) => 
             UPDATE subscriptions 
             SET plan_type = @new_plan_type,
                 updated_at = GETDATE()
-            WHERE user_id = @user_id AND is_active = 1
+            WHERE user_code = @user_code AND is_active = 1
         `;
         
         await executeQuery(updatePlanQuery, {
-            user_id: req.user.id,
+            user_code: req.user.id,
             new_plan_type
         });
 
@@ -657,7 +680,7 @@ router.post("/update-all-users-status", authenticateToken, async (req, res) => {
             SET is_active = CASE 
                 WHEN EXISTS (
                     SELECT 1 FROM subscriptions 
-                    WHERE user_id = app_users.id 
+                    WHERE user_code = app_users.user_code 
                     AND is_active = 1 
                     AND end_date >= CAST(GETDATE() AS DATE)
                 ) THEN 1
@@ -789,8 +812,8 @@ router.get("/user-status", authenticateToken, async (req, res) => {
     try {
         const statusQuery = `
             SELECT 
-                u.id,
-                u.username,
+                u.user_code,
+                u.user_name,
                 u.is_active,
                 s.plan_type,
                 s.start_date,
@@ -801,11 +824,11 @@ router.get("/user-status", authenticateToken, async (req, res) => {
                     ELSE 0
                 END as calculated_active
             FROM app_users u
-            LEFT JOIN subscriptions s ON u.id = s.user_id AND s.is_active = 1
-            WHERE u.id = @user_id
+            LEFT JOIN subscriptions s ON u.user_code = s.user_code AND s.is_active = 1
+            WHERE u.user_code = @user_code
         `;
         
-        const result = await executeQuery(statusQuery, { user_id: req.user.id });
+        const result = await executeQuery(statusQuery, { user_code: req.user.id });
         
         if (result.length === 0) {
             return res.status(404).json({
@@ -816,8 +839,8 @@ router.get("/user-status", authenticateToken, async (req, res) => {
         const userStatus = result[0];
         
         res.json({
-            user_id: userStatus.id,
-            username: userStatus.username,
+            user_code: userStatus.user_code,
+            username: userStatus.user_name,
             is_active_in_db: userStatus.is_active,
             calculated_active: userStatus.calculated_active,
             subscription: {

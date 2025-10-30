@@ -56,7 +56,7 @@ const authenticateToken = async (req, res, next) => {
             WHERE user_code = @user_code
         `;
 
-        const userResult = await executeQuery(userQuery, { user_code: decoded.user_id }); // ملاحظة: إذا اختلف اسم المتغير في التوكن غيره هنا وفي التوكن
+        const userResult = await executeQuery(userQuery, { user_code: decoded.user_code }); // ملاحظة: إذا اختلف اسم المتغير في التوكن غيره هنا وفي التوكن
         
         if (userResult.length === 0) {
             return res.status(401).json({
