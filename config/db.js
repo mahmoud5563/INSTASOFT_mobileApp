@@ -24,7 +24,6 @@ const poolConnect = pool.connect().catch(err => {
     console.error("   3. Correct credentials in .env file");
     console.error("   4. AWS Security Groups allow your IP");
     console.error("   5. Database server: " + process.env.DB_SERVER);
-    
     // بدلاً من إيقاف الـ server، سنعطيه فرصة يعمل بدون قاعدة البيانات
     console.warn("⚠️  Server will continue running but database operations will fail");
     return null;

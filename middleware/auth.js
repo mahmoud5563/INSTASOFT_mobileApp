@@ -38,27 +38,25 @@ const authenticateToken = async (req, res, next) => {
         // التحقق من صحة التوكن
         const decoded = verifyToken(token);
         
-        // التحقق من وجود المستخدم في قاعدة البيانات مع حالة الاشتراك النشط فقط
+        // التحقق من وجود المستخدم في قاعدة البيانات
         const userQuery = `
             SELECT 
-                u.id,
-                u.username,
-                u.email,
-                u.full_name,
-                u.phone,
-                u.last_login,
-                u.created_at,
-                s.plan_type,
-                s.start_date,
-                s.end_date,
-                s.is_active as subscription_is_active,
-                s.days_remaining
-            FROM app_users u
-            LEFT JOIN subscriptions s ON u.id = s.user_id AND s.is_active = 1
-            WHERE u.id = @user_id
+                user_code,
+                user_name,
+                user_pass,
+                user_power,
+                user_defult_store,
+                view_pay,
+                treasury_view,
+                user_end_day,
+                user_check,
+                intro_date,
+                main_report
+            FROM user_add
+            WHERE user_code = @user_code
         `;
 
-        const userResult = await executeQuery(userQuery, { user_id: decoded.user_id });
+        const userResult = await executeQuery(userQuery, { user_code: decoded.user_id }); // ملاحظة: إذا اختلف اسم المتغير في التوكن غيره هنا وفي التوكن
         
         if (userResult.length === 0) {
             return res.status(401).json({
@@ -66,37 +64,24 @@ const authenticateToken = async (req, res, next) => {
                 message: 'المستخدم غير موجود'
             });
         }
-
         const user = userResult[0];
 
-        // التحقق من حالة الاشتراك - فقط is_active = true
-        if (!user.subscription_is_active || user.subscription_is_active !== true) {
+        // التحقق من حالة المستخدم حسب user_check أو user_end_day (اختر المناسب)
+        if (!user.user_check || user.user_end_day) {
             return res.status(403).json({
-                error: 'اشتراك غير نشط',
-                message: 'يجب عليك الاشتراك أولاً للوصول إلى النظام',
+                error: 'مستخدم غير نشط',
+                message: 'المستخدم غير مفعل أو الاشتراك منتهي',
                 subscription_required: true
             });
         }
 
-        // إعداد بيانات الاشتراك
-        const subscriptionStatus = {
-            is_active: true,
-            plan_type: user.plan_type,
-            start_date: user.start_date,
-            end_date: user.end_date,
-            days_remaining: user.days_remaining || 0,
-            is_trial: user.plan_type === 'trial',
-            trial_days_remaining: user.plan_type === 'trial' ? (user.days_remaining || 0) : 0
-        };
-
-        // إضافة بيانات المستخدم للطلب
+        // إعداد بيانات المستخدم للطلب
         req.user = {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            full_name: user.full_name,
-            phone: user.phone,
-            subscription: subscriptionStatus
+            id: user.user_code,
+            username: user.user_name,
+            power: user.user_power,
+            intro_date: user.intro_date,
+            is_active: !!user.user_check
         };
 
         next();
@@ -128,7 +113,7 @@ const requireSubscription = (requiredPlan) => {
             });
         }
 
-        if (!req.user.subscription.is_active) {
+        if (!req.user.is_active) {
             return res.status(403).json({
                 error: 'اشتراك غير نشط',
                 message: 'يجب تفعيل الاشتراك للوصول لهذا المورد'
@@ -136,7 +121,7 @@ const requireSubscription = (requiredPlan) => {
         }
 
         // التحقق من نوع الاشتراك إذا كان مطلوب
-        if (requiredPlan && req.user.subscription.plan_type !== requiredPlan) {
+        if (requiredPlan && req.user.plan_type !== requiredPlan) {
             return res.status(403).json({
                 error: 'اشتراك غير مناسب',
                 message: `هذا المورد يتطلب اشتراك من نوع: ${requiredPlan}`

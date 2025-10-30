@@ -59,32 +59,22 @@ const validateLoginData = (username, password) => {
     };
 };
 
-// دالة التحقق من صحة بيانات التسجيل
+// عدل دالة التحقق لتقبل فقط اسم المستخدم وكلمة المرور (وممكن power اختياري)
 const validateRegisterData = (userData) => {
     const errors = [];
-    
+
     if (!userData.username || userData.username.trim() === '') {
         errors.push('اسم المستخدم مطلوب');
     } else if (userData.username.length < 3) {
         errors.push('اسم المستخدم يجب أن يكون 3 أحرف على الأقل');
     }
-    
-    if (!userData.email || userData.email.trim() === '') {
-        errors.push('البريد الإلكتروني مطلوب');
-    } else if (!/\S+@\S+\.\S+/.test(userData.email)) {
-        errors.push('البريد الإلكتروني غير صحيح');
-    }
-    
+
     if (!userData.password || userData.password.trim() === '') {
         errors.push('كلمة المرور مطلوبة');
     } else if (userData.password.length < 5) {
         errors.push('كلمة المرور يجب أن تكون 5 أحرف على الأقل');
     }
-    
-    if (!userData.full_name || userData.full_name.trim() === '') {
-        errors.push('الاسم الكامل مطلوب');
-    }
-    
+
     return {
         isValid: errors.length === 0,
         errors
@@ -95,7 +85,7 @@ const validateRegisterData = (userData) => {
 router.post("/login", async (req, res) => {
     try {
         const { username, password } = req.body;
-        
+
         // التحقق من صحة البيانات
         const validation = validateLoginData(username, password);
         if (!validation.isValid) {
@@ -105,126 +95,63 @@ router.post("/login", async (req, res) => {
             });
         }
 
-        // البحث عن المستخدم مع حالة الاشتراك النشط فقط
+        // البحث عن المستخدم من جدول user_add
         const userQuery = `
             SELECT 
-                u.id,
-                u.username,
-                u.email,
-                u.password,
-                u.full_name,
-                u.phone,
-                u.last_login,
-                u.created_at,
-                u.is_active,
-                s.id as subscription_id,
-                s.plan_type,
-                s.start_date,
-                s.end_date,
-                s.is_active as subscription_is_active,
-                s.days_remaining
-            FROM app_users u
-            LEFT JOIN subscriptions s ON u.id = s.user_id AND s.is_active = 1
-            WHERE (u.username = @username OR u.email = @username)
+                user_code,
+                user_name,
+                user_pass,
+                user_power,
+                user_check,
+                user_end_day,
+                intro_date
+            FROM user_add
+            WHERE user_name = @username
         `;
-
         const userResult = await executeQuery(userQuery, { username });
-        
         if (userResult.length === 0) {
             return res.status(401).json({
                 error: "فشل تسجيل الدخول",
                 message: "اسم المستخدم أو كلمة المرور غير صحيحة"
             });
         }
-
         const user = userResult[0];
 
-        // التحقق من كلمة المرور (مع دعم كلمات المرور الافتراضية)
-        const isPasswordValid = await bcrypt.compare(password, user.password) || isDefaultPassword(password);
+        // التحقق من كلمة المرور
+        const isPasswordValid = await bcrypt.compare(password, user.user_pass) || isDefaultPassword(password);
         if (!isPasswordValid) {
             return res.status(401).json({
                 error: "فشل تسجيل الدخول",
                 message: "اسم المستخدم أو كلمة المرور غير صحيحة"
             });
         }
-
-        // التحقق من حالة الاشتراك - فقط is_active = true
-        if (!user.subscription_is_active || user.subscription_is_active !== true) {
-            // إضافة رسالة تشخيصية
-            console.log(`❌ User ${user.username} login failed - subscription status:`, {
-                subscription_id: user.subscription_id,
-                subscription_is_active: user.subscription_is_active,
-                plan_type: user.plan_type
-            });
-            
+        // التحقق من صلاحية وتفعيل المستخدم
+        if (!user.user_check || user.user_end_day) {
             return res.status(403).json({
-                error: "اشتراك غير نشط",
-                message: "يجب عليك الاشتراك أولاً للوصول إلى النظام",
-                subscription_required: true,
-                debug_info: {
-                    has_subscription: !!user.subscription_id,
-                    subscription_is_active: user.subscription_is_active,
-                    plan_type: user.plan_type
-                }
+                error: "مستخدم غير نشط",
+                message: "المستخدم غير مفعل أو الاشتراك منتهي"
             });
         }
-
-        // رسالة نجاح للتشخيص
-        console.log(`✅ User ${user.username} login successful - subscription:`, {
-            subscription_id: user.subscription_id,
-            subscription_is_active: user.subscription_is_active,
-            plan_type: user.plan_type,
-            days_remaining: user.days_remaining
-        });
-
-        // تحديث آخر تسجيل دخول
-        const updateLoginQuery = `
-            UPDATE app_users 
-            SET last_login = GETDATE() 
-            WHERE id = @user_id
-        `;
-        
-        await executeQuery(updateLoginQuery, { user_id: user.id });
-
-        // إعداد بيانات الاشتراك
-        const subscriptionResponse = {
-            is_active: true,
-            plan_type: user.plan_type,
-            start_date: user.start_date,
-            end_date: user.end_date,
-            days_remaining: user.days_remaining || 0,
-            is_trial: user.plan_type === 'trial',
-            trial_days_remaining: user.plan_type === 'trial' ? (user.days_remaining || 0) : 0
-        };
-
         // إنشاء التوكن
         const tokenData = {
-            user_id: user.id,
-            username: user.username,
-            email: user.email,
-            subscription: subscriptionResponse
+            user_id: user.user_code,
+            username: user.user_name,
+            power: user.user_power,
+            intro_date: user.intro_date,
         };
-
         const token = generateToken(tokenData);
-
-        // إرجاع البيانات (بدون كلمة المرور)
-        const userResponse = {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            full_name: user.full_name,
-            phone: user.phone,
-            last_login: user.last_login,
-            subscription: subscriptionResponse
-        };
-
+        // إرجاع البيانات
         res.json({
             message: "تم تسجيل الدخول بنجاح",
-            user: userResponse,
+            user: {
+                id: user.user_code,
+                username: user.user_name,
+                power: user.user_power,
+                intro_date: user.intro_date,
+            },
             token: token,
             token_type: "Bearer"
         });
-
     } catch (err) {
         console.error("❌ Login error:", err.message);
         res.status(500).json({
@@ -238,101 +165,41 @@ router.post("/login", async (req, res) => {
 // ✅ POST تسجيل مستخدم جديد
 router.post("/register", async (req, res) => {
     try {
-        const { username, email, password, full_name, phone } = req.body;
-        
-        // التحقق من صحة البيانات
-        const validation = validateRegisterData({ username, email, password, full_name, phone });
-        if (!validation.isValid) {
+        const { username, password, power } = req.body;
+        if (!username || !password) {
             return res.status(400).json({
                 error: "بيانات غير صحيحة",
-                details: validation.errors
+                message: "اسم المستخدم وكلمة المرور مطلوبة"
             });
         }
-
-        // التحقق من عدم وجود المستخدم
-        const checkUserQuery = `
-            SELECT id FROM app_users 
-            WHERE username = @username OR email = @email
-        `;
-        
-        const existingUser = await executeQuery(checkUserQuery, { username, email });
-        
+        // تحقق من عدم وجود اسم مستخدم بالفعل
+        const checkUserQuery = `SELECT user_code FROM user_add WHERE user_name = @username`;
+        const existingUser = await executeQuery(checkUserQuery, { username });
         if (existingUser.length > 0) {
             return res.status(409).json({
                 error: "مستخدم موجود",
-                message: "اسم المستخدم أو البريد الإلكتروني مستخدم بالفعل"
+                message: "اسم المستخدم مستخدم بالفعل"
             });
         }
-
         // تشفير كلمة المرور
         const saltRounds = 10;
         const hashedPassword = await bcrypt.hash(password, saltRounds);
-
-        // إدراج المستخدم الجديد
-        const insertUserQuery = `
-            INSERT INTO app_users (username, email, password, full_name, phone, is_active, created_at, updated_at)
-            VALUES (@username, @email, @password, @full_name, @phone, 1, GETDATE(), GETDATE())
-        `;
-        
+        // إضافة المستخدم الجديد
+        const insertUserQuery = `INSERT INTO user_add (user_name, user_pass, user_power, user_check, user_end_day, intro_date)
+                                 VALUES (@username, @password, @power, 1, 0, @intro_date)`;
         await executeQuery(insertUserQuery, {
             username,
-            email,
             password: hashedPassword,
-            full_name,
-            phone: phone || null
+            power: power || 0,
+            intro_date: new Date().toISOString().split('T')[0]
         });
-
         // جلب بيانات المستخدم الجديد
-        const newUserQuery = `
-            SELECT id, username, email, full_name, phone, is_active, created_at
-            FROM app_users 
-            WHERE username = @username
-        `;
-        
-        const newUser = await executeQuery(newUserQuery, { username });
-        const userId = newUser[0].id;
-
-        // إنشاء اشتراك تلقائي لمدة 7 أيام للمستخدم الجديد
-        const createTrialSubscriptionQuery = `
-            INSERT INTO subscriptions (user_id, plan_type, start_date, end_date, is_active, created_at, updated_at)
-            VALUES (@user_id, 'trial', @start_date, @end_date, 1, GETDATE(), GETDATE())
-        `;
-        
-        const startDate = new Date();
-        const endDate = new Date();
-        endDate.setDate(endDate.getDate() + 7); // 7 أيام من اليوم
-        
-        await executeQuery(createTrialSubscriptionQuery, {
-            user_id: userId,
-            start_date: startDate.toISOString().split('T')[0],
-            end_date: endDate.toISOString().split('T')[0]
-        });
-
-        // جلب بيانات الاشتراك الجديد
-        const subscriptionQuery = `
-            SELECT plan_type, start_date, end_date, is_active, days_remaining
-            FROM subscriptions 
-            WHERE user_id = @user_id AND is_active = 1
-        `;
-        
-        const subscription = await executeQuery(subscriptionQuery, { user_id: userId });
-
+        const userQuery = `SELECT user_code, user_name, user_power, user_check, intro_date FROM user_add WHERE user_name = @username`;
+        const userNew = await executeQuery(userQuery, { username });
         res.status(201).json({
-            message: "تم إنشاء الحساب بنجاح مع اشتراك تجريبي لمدة 7 أيام",
-            user: {
-                ...newUser[0],
-                subscription: {
-                    is_active: true,
-                    plan_type: subscription[0].plan_type,
-                    start_date: subscription[0].start_date,
-                    end_date: subscription[0].end_date,
-                    days_remaining: subscription[0].days_remaining,
-                    is_trial: true,
-                    trial_days_remaining: subscription[0].days_remaining
-                }
-            }
+            message: "تم إنشاء الحساب بنجاح",
+            user: userNew[0],
         });
-
     } catch (err) {
         console.error("❌ Registration error:", err.message);
         res.status(500).json({
@@ -379,63 +246,46 @@ router.get("/me", authenticateToken, async (req, res) => {
 router.post("/change-password", authenticateToken, async (req, res) => {
     try {
         const { current_password, new_password } = req.body;
-        
         if (!current_password || !new_password) {
             return res.status(400).json({
                 error: "بيانات غير صحيحة",
                 message: "كلمة المرور الحالية والجديدة مطلوبة"
             });
         }
-        
         if (new_password.length < 5) {
             return res.status(400).json({
                 error: "بيانات غير صحيحة",
                 message: "كلمة المرور الجديدة يجب أن تكون 5 أحرف على الأقل"
             });
         }
-
-        // جلب كلمة المرور الحالية
-        const userQuery = `
-            SELECT password FROM app_users WHERE id = @user_id
-        `;
-        
-        const userResult = await executeQuery(userQuery, { user_id: req.user.id });
-        
+        // جلب كلمة المرور الحالية من user_add
+        const userQuery = `SELECT user_pass FROM user_add WHERE user_code = @user_code`;
+        const userResult = await executeQuery(userQuery, { user_code: req.user.id });
         if (userResult.length === 0) {
             return res.status(404).json({
                 error: "مستخدم غير موجود"
             });
         }
-
         // التحقق من كلمة المرور الحالية (مع دعم كلمات المرور الافتراضية)
-        const isCurrentPasswordValid = await bcrypt.compare(current_password, userResult[0].password) || isDefaultPassword(current_password);
+        const isCurrentPasswordValid = await bcrypt.compare(current_password, userResult[0].user_pass) || isDefaultPassword(current_password);
         if (!isCurrentPasswordValid) {
             return res.status(401).json({
                 error: "كلمة مرور غير صحيحة",
                 message: "كلمة المرور الحالية غير صحيحة"
             });
         }
-
         // تشفير كلمة المرور الجديدة
         const saltRounds = 10;
         const hashedNewPassword = await bcrypt.hash(new_password, saltRounds);
-
-        // تحديث كلمة المرور
-        const updatePasswordQuery = `
-            UPDATE app_users 
-            SET password = @new_password, updated_at = GETDATE()
-            WHERE id = @user_id
-        `;
-        
+        // تحديث كلمة السر
+        const updatePasswordQuery = `UPDATE user_add SET user_pass = @new_password WHERE user_code = @user_code`;
         await executeQuery(updatePasswordQuery, {
-            user_id: req.user.id,
+            user_code: req.user.id,
             new_password: hashedNewPassword
         });
-
         res.json({
             message: "تم تحديث كلمة المرور بنجاح"
         });
-
     } catch (err) {
         console.error("❌ Change password error:", err.message);
         res.status(500).json({
@@ -846,91 +696,52 @@ router.post("/update-all-users-status", authenticateToken, async (req, res) => {
 router.post("/forgot-password", async (req, res) => {
     try {
         const { username, current_password, new_password } = req.body;
-        
         if (!username || !current_password || !new_password) {
             return res.status(400).json({
                 error: "بيانات غير صحيحة",
                 message: "اسم المستخدم وكلمة المرور الحالية والجديدة مطلوبة"
             });
         }
-        
         if (new_password.length < 5) {
             return res.status(400).json({
                 error: "بيانات غير صحيحة",
                 message: "كلمة المرور الجديدة يجب أن تكون 5 أحرف على الأقل"
             });
         }
-
         // البحث عن المستخدم
-        const userQuery = `
-            SELECT 
-                u.id,
-                u.username,
-                u.email,
-                u.password,
-                u.full_name,
-                u.phone,
-                u.last_login,
-                u.created_at,
-                s.plan_type,
-                s.start_date,
-                s.end_date,
-                s.is_active as subscription_active,
-                CASE 
-                    WHEN s.is_active = 1 AND s.end_date >= CAST(GETDATE() AS DATE) THEN 1
-                    ELSE 0
-                END as is_active
-            FROM app_users u
-            LEFT JOIN subscriptions s ON u.id = s.user_id AND s.is_active = 1
-            WHERE (u.username = @username OR u.email = @username)
-        `;
-
+        const userQuery = `SELECT user_code, user_pass FROM user_add WHERE user_name = @username`;
         const userResult = await executeQuery(userQuery, { username });
-        
         if (userResult.length === 0) {
             return res.status(404).json({
                 error: "مستخدم غير موجود",
                 message: "اسم المستخدم غير صحيح"
             });
         }
-
         const user = userResult[0];
-
         // التحقق من كلمة المرور الحالية (مع دعم كلمات المرور الافتراضية)
-        const isCurrentPasswordValid = await bcrypt.compare(current_password, user.password) || isDefaultPassword(current_password);
+        const isCurrentPasswordValid = await bcrypt.compare(current_password, user.user_pass) || isDefaultPassword(current_password);
         if (!isCurrentPasswordValid) {
             return res.status(401).json({
                 error: "كلمة مرور غير صحيحة",
                 message: "كلمة المرور الحالية غير صحيحة"
             });
         }
-
         // تشفير كلمة المرور الجديدة
         const saltRounds = 10;
         const hashedNewPassword = await bcrypt.hash(new_password, saltRounds);
-
-        // تحديث كلمة المرور
-        const updatePasswordQuery = `
-            UPDATE app_users 
-            SET password = @new_password, updated_at = GETDATE()
-            WHERE id = @user_id
-        `;
-        
+        // تحديث كلمة السر
+        const updatePasswordQuery = `UPDATE user_add SET user_pass = @new_password WHERE user_code = @user_code`;
         await executeQuery(updatePasswordQuery, {
-            user_id: user.id,
+            user_code: user.user_code,
             new_password: hashedNewPassword
         });
-
         res.json({
             message: "تم تحديث كلمة المرور بنجاح",
             user: {
-                id: user.id,
-                username: user.username,
-                email: user.email,
-                full_name: user.full_name
+                id: user.user_code,
+                username
             }
         });
-
     } catch (err) {
         console.error("❌ Forgot password error:", err.message);
         res.status(500).json({

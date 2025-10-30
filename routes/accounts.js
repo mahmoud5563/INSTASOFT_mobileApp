@@ -62,7 +62,7 @@ const validateCode = (code) => {
 
 
 // ✅ GET كل الحسابات (عملاء + موردين) - مُعدَّل
-router.get("/",  authenticateToken, async (req, res) => {
+router.get("/",   async (req, res) => {
     try {
    
 
