@@ -369,7 +369,7 @@ router.get("/balances/suppliers", authenticateToken, async (req, res) => {
 
 
 // GET ارصده تعدت حد الاتمان - مُعدَّل
-router.get("/over-credit", async (req, res) => {
+router.get("/over-credit", authenticateToken, async (req, res) => {
     try {
        
 
