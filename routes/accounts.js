@@ -369,7 +369,7 @@ router.get("/balances/suppliers", authenticateToken, async (req, res) => {
 
 
 // GET ارصده تعدت حد الاتمان - مُعدَّل
-router.get("/over-credit", authenticateToken, async (req, res) => {
+router.get("/over-credit", async (req, res) => {
     try {
        
 
@@ -380,13 +380,13 @@ router.get("/over-credit", authenticateToken, async (req, res) => {
 
         // استعلام للحصول على العدد الإجمالي للحسابات التي تجاوزت الحد الائتماني
         const countQuery = `
-            SELECT COUNT(*) AS total
+            SELECT a.code
             FROM account_add a
             LEFT JOIN account_trans t ON a.code = t.code
             GROUP BY a.code, a.acc_name, a.acc_Balance_open, a.acc_Credit
             HAVING 
                 a.acc_Credit > 0
-                AND (a.acc_Balance_open + ISNULL(SUM(t.trans_debit), 0) - ISNULL(SUM(t.trans_credit), 0)) > a.acc_Credit;
+                AND (a.acc_Balance_open + ISNULL(SUM(t.trans_debit), 0) - ISNULL(SUM(t.trans_credit), 0)) > a.acc_Credit
         `;
         
         const totalResult = await pool.request()
