@@ -52,6 +52,7 @@ const validatePaginationParams = (page, limit) => {
 
 const validateCode = (code) => {
     const codeNum = parseInt(code);
+    
     return {
         isValid: !isNaN(codeNum) && codeNum > 0,
         value: codeNum,
@@ -511,6 +512,217 @@ router.get("/profits/:code", authenticateToken, async (req, res) => {
 });
 
 
-// ... (بقية الدوال المدينين والدائنين وحركة الأصناف تحتاج نفس التعديل) ...
+
+
+// ✅ GET كل المدينين (حسابات برصيد موجب)
+router.get("/debtors", async (req, res) => {
+  try {
+    const result = await pool.request().query("SELECT * FROM account_show WHERE balance > 0");
+    res.json(result.recordset);
+  } catch (err) {
+    console.error("❌ Error fetching debtors:", err);
+    res.status(500).json({ error: "Database fetch failed" });
+  }
+});
+
+// // ✅ GET مدين معين بالكود (حساب برصيد موجب)
+// router.get("/debtors/:code", async (req, res) => {
+//   try {
+//     const { code } = req.params;
+//     const accountCode = parseInt(code);
+
+//     const result = await pool.request()
+//       .input("code", sql.Int, accountCode)
+//       .query("SELECT * FROM account_show WHERE balance > 0 AND code = @code");
+
+//     res.json(result.recordset);
+//   } catch (err) {
+//     console.error("❌ Error fetching specific debtor:", err);
+//     res.status(500).json({ error: "Database fetch failed" });
+//   }
+// });
+
+// ✅ GET كل الدائنين (حسابات برصيد سالب)
+router.get("/creditors", async (req, res) => {
+  try {
+    const result = await pool.request().query("SELECT * FROM account_show WHERE balance < 0");
+    res.json(result.recordset);
+  } catch (err) {
+    console.error("❌ Error fetching creditors:", err);
+    res.status(500).json({ error: "Database fetch failed" });
+  }
+});
+
+// // ✅ GET دائن معين بالكود (حساب برصيد سالب)
+// router.get("/creditors/:code", async (req, res) => {
+//   try {
+//     const { code } = req.params;
+//     const accountCode = parseInt(code);
+
+//     const result = await pool.request()
+//       .input("code", sql.Int, accountCode)
+//       .query("SELECT * FROM account_show WHERE balance < 0 AND code = @code");
+
+//     res.json(result.recordset);
+//   } catch (err) {
+//     console.error("❌ Error fetching specific creditor:", err);
+//     res.status(500).json({ error: "Database fetch failed" });
+//   }
+// });
+
+
+// ✅ GET حركة حساب مع الأصناف لفترة معينة
+router.get("/:code/items-movement", async (req, res) => {
+  try {
+    const { code } = req.params;
+    const { date_from, date_to } = req.query;
+
+    if (!date_from || !date_to) {
+      return res.status(400).json({ error: "يرجى إرسال date_from و date_to كـ Query Params" });
+    }
+
+    const result = await pool.request()
+      .input("acc_code", sql.Int, code)
+      .input("date_from", sql.Date, date_from)
+      .input("date_to", sql.Date, date_to)
+      .query(`
+        SELECT 
+          im.trans_Statement,
+          im.trans_number,
+          im.trans_date,
+          im.trans_ward,
+          im.trans_monsrf,
+          im.item_price,
+          im.item_total,
+          ia.item_ar,
+          s.sec_name,
+          s.sec_s1,
+          s.sec_phone,
+          s.sec_number,
+          s.sec_web,
+          s.sec_address,
+          s.sec_email,
+          s.sec_s2,
+          s.sec_pic
+        FROM item_movement im
+        INNER JOIN item_add ia ON im.code = ia.code
+        CROSS JOIN (SELECT TOP 1 * FROM section) s
+        WHERE im.acc_code = @acc_code
+          AND im.trans_date BETWEEN @date_from AND @date_to
+        ORDER BY im.trans_date ASC
+      `);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ message: "لا يوجد بيانات" });
+    }
+
+    res.json(result.recordset);
+
+  } catch (err) {
+    console.error("❌ Error fetching account item movement:", err);
+    res.status(500).json({ error: "Database fetch failed" });
+  }
+});
+
+
+
+// ✅ GET حركة حساب مع صنف معين لفترة معينة
+router.get("/:acc_code/item/:item_code/movement", async (req, res) => {
+  try {
+    const { acc_code, item_code } = req.params;
+    const { date_from, date_to } = req.query;
+
+    if (!date_from || !date_to) {
+      return res.status(400).json({ error: "يرجى إرسال date_from و date_to كـ Query Params" });
+    }
+
+    // هنجلب البيانات من جدول item_movement + بيانات الصنف + بيانات الحساب + بيانات الشركة (section)
+    const result = await pool.request()
+      .input("acc_code", sql.Int, acc_code)
+      .input("item_code", sql.Int, item_code)
+      .input("date_from", sql.Date, date_from)
+      .input("date_to", sql.Date, date_to)
+      .query(`
+        SELECT 
+          im.trans_Statement,
+          im.trans_number,
+          im.trans_date,
+          im.trans_ward,
+          im.trans_monsrf,
+          im.item_price,
+          im.item_total,
+          a.acc_name,
+          ia.item_ar,
+          s.sec_name,
+          s.sec_s1,
+          s.sec_phone,
+          s.sec_number,
+          s.sec_web,
+          s.sec_address,
+          s.sec_email,
+          s.sec_s2,
+          s.sec_pic
+        FROM item_movement im
+        INNER JOIN item_add ia ON im.code = ia.code
+        INNER JOIN account_add a ON im.acc_code = a.code
+        CROSS JOIN (SELECT TOP 1 * FROM section) s
+        WHERE im.acc_code = @acc_code
+          AND im.code = @item_code
+          AND im.trans_date BETWEEN @date_from AND @date_to
+        ORDER BY im.trans_date ASC
+      `);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ message: "لا يوجد بيانات" });
+    }
+
+    // ✅ حساب الرصيد التراكمي زي ما عامل في VB.NET
+    let runningBalance = 0;
+    const movements = result.recordset.map((row) => {
+      if (row.trans_ward > 0) {
+        runningBalance += row.trans_ward;
+      } else if (row.trans_monsrf > 0) {
+        runningBalance -= row.trans_monsrf;
+      }
+
+      return {
+        trans_Statement: row.trans_Statement,
+        trans_number: row.trans_number,
+        trans_date: row.trans_date,
+        ward: row.trans_ward,
+        monsrf: row.trans_monsrf,
+        item_price: row.item_price,
+        item_total: row.item_total,
+        balance: runningBalance,
+        acc_name: row.acc_name,
+        item_name: row.item_ar,
+        section: {
+          name: row.sec_name,
+          s1: row.sec_s1,
+          phone: row.sec_phone,
+          number: row.sec_number,
+          web: row.sec_web,
+          address: row.sec_address,
+          email: row.sec_email,
+          s2: row.sec_s2,
+          pic: row.sec_pic
+        }
+      };
+    });
+
+    res.json(movements);
+
+  } catch (err) {
+    console.error("❌ Error fetching account item movement:", err);
+    res.status(500).json({ error: "Database fetch failed" });
+  }
+});
+
+
+
+
+
+
+
 
 module.exports = router;
