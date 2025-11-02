@@ -602,8 +602,7 @@ router.get("/:code/items-movement", async (req, res) => {
           s.sec_web,
           s.sec_address,
           s.sec_email,
-          s.sec_s2,
-          s.sec_pic
+          s.sec_s2
         FROM item_movement im
         INNER JOIN item_add ia ON im.code = ia.code
         CROSS JOIN (SELECT TOP 1 * FROM section) s
