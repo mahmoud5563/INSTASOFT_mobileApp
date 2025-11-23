@@ -366,23 +366,15 @@ router.post("/create-subscription", async (req, res) => {
             SELECT 
                 u.user_code,
                 u.user_name,
-                u.user_email,
                 u.user_pass,
-                u.user_full_name,
-                u.user_phone,
-                u.user_last_login,
-                u.user_created_at,
-                s.plan_type,
-                s.start_date,
-                s.end_date,
                 s.is_active as subscription_active,
                 CASE 
                     WHEN s.is_active = 1 AND s.end_date >= CAST(GETDATE() AS DATE) THEN 1
                     ELSE 0
                 END as is_active
-            FROM app_users u
+            FROM user_add u
             LEFT JOIN subscriptions s ON u.user_code = s.user_code AND s.is_active = 1
-            WHERE (u.user_name = @username OR u.user_email = @username)
+            WHERE (u.user_name = @username)
         `;
 
         const userResult = await executeQuery(userQuery, { username });
