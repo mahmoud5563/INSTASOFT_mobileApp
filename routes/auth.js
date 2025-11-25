@@ -7,11 +7,11 @@ const { executeQuery } = require("../config/db");
 const { generateToken, authenticateToken } = require("../middleware/auth");
 const sql = require("mssql");
 
-// كلمات المرور الافتراضية من متغيرات البيئة
+
 const DEFAULT_ADMIN_PASSWORD = process.env.DEFAULT_ADMIN_PASSWORD || 'admin';
 const DEFAULT_CLIENT_PASSWORD = process.env.DEFAULT_CLIENT_PASSWORD || 'client';
 
-// دالة للتحقق من كلمات المرور الافتراضية
+// التحقق من كلمه المروؤ الافتراضيه
 const isDefaultPassword = (password) => {
     return password === DEFAULT_ADMIN_PASSWORD || password === DEFAULT_CLIENT_PASSWORD;
 };
@@ -87,7 +87,7 @@ router.post("/login", async (req, res) => {
     try {
         const { username, password } = req.body;
 
-        // التحقق من صحة البيانات
+        // 1. التحقق من صحة البيانات المدخلة
         const validation = validateLoginData(username, password);
         if (!validation.isValid) {
             return res.status(400).json({
@@ -96,29 +96,36 @@ router.post("/login", async (req, res) => {
             });
         }
 
-        // البحث عن المستخدم من جدول user_add
+        // 2. الاستعلام: جلب بيانات المستخدم مع رصيد الأيام من جدول الاشتراكات
+        // نستخدم LEFT JOIN و COALESCE لتحويل القيمة NULL (في حال عدم وجود اشتراك) إلى 0
         const userQuery = `
             SELECT 
-                user_code,
-                user_name,
-                user_pass,
-                user_power,
-                user_check,
-                user_end_day,
-                intro_date
-            FROM user_add
-            WHERE user_name = @username
+                u.user_code,
+                u.user_name,
+                u.user_pass,
+                u.user_power,
+                u.user_check,
+                u.intro_date,
+                COALESCE(s.days_remaining, 0) as days_remaining
+            FROM user_add u
+            LEFT JOIN subscriptions s ON u.user_code = s.user_code
+            WHERE u.user_name = @username
+            ORDER BY s.id DESC -- (اختياري) لضمان جلب أحدث اشتراك في حال وجود أكثر من سجل
         `;
+
         const userResult = await executeQuery(userQuery, { username });
+
         if (userResult.length === 0) {
             return res.status(401).json({
                 error: "فشل تسجيل الدخول",
                 message: "اسم المستخدم أو كلمة المرور غير صحيحة"
             });
         }
+        
+        // بما أننا قد نستخدم LEFT JOIN، نأخذ أول نتيجة
         const user = userResult[0];
 
-        // التحقق من كلمة المرور
+        // 3. التحقق من كلمة المرور
         const isPasswordValid = await bcrypt.compare(password, user.user_pass) || isDefaultPassword(password);
         if (!isPasswordValid) {
             return res.status(401).json({
@@ -126,39 +133,42 @@ router.post("/login", async (req, res) => {
                 message: "اسم المستخدم أو كلمة المرور غير صحيحة"
             });
         }
-        // التحقق من صلاحية وتفعيل المستخدم
-        if (!user.user_check || user.user_end_day) {
+
+        // 5. التحقق من الأيام المتبقية في الاشتراك
+        // الشرط: يجب أن تكون الأيام أكبر من 0
+        if (user.days_remaining <= 0) {
             return res.status(403).json({
-                error: "مستخدم غير نشط",
-                message: "المستخدم غير مفعل أو الاشتراك منتهي"
+                error: "الاشتراك منتهي",
+                message: "عفواً، رصيد أيام الاشتراك الخاص بك هو 0. يرجى التجديد."
             });
         }
-        // إنشاء التوكن
+
+        // 6. إنشاء التوكن
         const tokenData = {
             user_code: user.user_code,
             username: user.user_name,
             power: user.user_power,
-            intro_date: user.intro_date,
+            days_remaining: user.days_remaining
         };
         const token = generateToken(tokenData);
-        // إرجاع البيانات
+
+        // إرسال الرد
         res.json({
             message: "تم تسجيل الدخول بنجاح",
             user: {
                 id: user.user_code,
                 username: user.user_name,
                 power: user.user_power,
-                intro_date: user.intro_date,
+                days_remaining: user.days_remaining
             },
-            token: token,
-            token_type: "Bearer"
+            token: token
         });
+
     } catch (err) {
-        console.error("❌ Login error:", err.message);
+        console.error("❌ Login Error:", err);
         res.status(500).json({
             error: "خطأ في الخادم",
-            message: "فشل في تسجيل الدخول",
-            details: err.message
+            message: "حدث خطأ أثناء محاولة تسجيل الدخول"
         });
     }
 });
@@ -250,20 +260,6 @@ router.post("/logout", authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ GET معلومات المستخدم الحالي
-router.get("/me", authenticateToken, async (req, res) => {
-    try {
-        res.json({
-            user: req.user
-        });
-    } catch (err) {
-        console.error("❌ Get user info error:", err.message);
-        res.status(500).json({
-            error: "خطأ في الخادم",
-            message: "فشل في جلب معلومات المستخدم"
-        });
-    }
-});
 
 // ✅ POST تحديث كلمة المرور
 router.post("/change-password", authenticateToken, async (req, res) => {
@@ -318,20 +314,6 @@ router.post("/change-password", authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ GET معلومات الاشتراك الحالي
-router.get("/subscription", authenticateToken, async (req, res) => {
-    try {
-        res.json({
-            subscription: req.user.subscription
-        });
-    } catch (err) {
-        console.error("❌ Get subscription info error:", err.message);
-        res.status(500).json({
-            error: "خطأ في الخادم",
-            message: "فشل في جلب معلومات الاشتراك"
-        });
-    }
-});
 
 // ✅ POST إنشاء اشتراك جديد (بدون توكن - للمستخدمين الجدد)
 router.post("/create-subscription", async (req, res) => {
