@@ -34,7 +34,7 @@ app.use("/api/expenses", expensesRoutes);
 app.use("/api/subscriptions", subscriptionsRoutes);
 //HARAAAAMMMMM//
 
-const PORT = process.env.PORT || 5000; 
+const PORT = process.env.PORT ; 
 
 // معالجة الأخطاء غير المتوقعة
 process.on('uncaughtException', (err) => {
